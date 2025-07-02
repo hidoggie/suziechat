@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>음성 챗봇 서비스</title>
+    <style>
+        /* CSS는 이전과 동일하게 유지 */
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; height: 100vh; margin: 0; background-color: #f0f2f5; padding-top: 20px; }
+        #container { width: 90%; max-width: 700px; }
+        #status { font-size: 1.2em; color: #fff; margin-bottom: 20px; background-color: #555; padding: 10px 20px; border-radius: 20px; text-align: center; transition: background-color 0.3s; }
+        #status.listening { background-color: #28a745; }
+        #status.speaking { background-color: #007bff; }
+        #status.processing { background-color: #ffc107; color: #333; }
+        #transcript { margin-top: 20px; width: 100%; background-color: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); min-height: 300px; max-height: 60vh; overflow-y: auto;}
+        .message { margin-bottom: 12px; line-height: 1.5; }
+        .user { color: #005A9C; font-weight: bold; }
+        .ai { color: #444; }
+
+        #overlay {
+            position: fixed; /* 화면 전체를 덮도록 고정 */
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7); /* 반투명 검은색 배경 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000; /* 다른 요소들 위에 표시 */
+        }
+        #overlay-text {
+            color: white;
+            font-size: 2em;
+            text-align: center;
+            padding: 20px;
+        }
+        .hidden {
+            visibility: hidden; /* 평소에는 숨겨둠 */
+        }
+
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>음성 챗봇 서비스</h1>
+        <div id="status">연결 대기 중...</div>
+        <div id="transcript">
+            <p>서버에 연결되면 자동으로 음성 감지를 시작합니다.</p>
+        </div>
+    </div>
+
+    <div id="overlay" class="hidden">
+        <div id="overlay-text">
+            대화가 종료되었습니다.<br><br>이 창을 닫아주세요.
+        </div>
+    </div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const transcriptDiv = document.getElementById('transcript');
+        const overlay = document.getElementById('overlay'); // 오버레이 요소 가져오기
+        let socket;
+
+        // 연결이 한 번이라도 성공했는지 기억하는 '깃발' 변수.
+        // 이 변수 덕분에 초기 로딩 시 연결에 실패해도 종료 오버레이가 뜨지 않습니다.
+        let connectionEstablished = false;
+
+        const VAD_CONFIG = {
+            SILENCE_THRESHOLD: 0.01,
+            SILENCE_DURATION: 1.5,
+            SAMPLE_RATE: 16000, // 백엔드와 샘플링 레이트 통일
+        };
+
+        let audioContext, mediaStream, mediaStreamSource, scriptProcessor;
+        let isSpeaking = false;
+        let silenceStartTime = 0;
+        let audioBuffer = [];
+
+        function connectWebSocket() {
+  //          socket = new WebSocket("ws://127.0.0.1:8000/ws");
+
+            console.log("WebSocket 연결 시도...");
+            
+            // ✨✨✨ 최종 수정된 부분 ✨✨✨
+            // 1. 현재 페이지의 프로토콜(http/https)을 확인합니다.
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            // 2. 현재 페이지의 호스트 주소를 사용합니다.
+            const host = window.location.host;
+            // 3. 동적으로 웹소켓 주소를 생성합니다.
+            const socketURL = `${protocol}//${host}/ws`;
+
+            console.log(`연결할 웹소켓 주소: ${socketURL}`);
+            socket = new WebSocket(socketURL);
+            // socket = new WebSocket("wss://https://suziechat.onrender.com/ws"); // 직접 주소를 입력해도 됩니다.
+
+
+            socket.onopen = () => {
+                // 연결에 성공하면 '깃발'을 true로 설정합니다.
+                connectionEstablished = true;
+
+                statusDiv.textContent = "듣고 있습니다...";
+                statusDiv.className = 'listening';
+                startVoiceActivityDetection();
+            };
+            socket.onmessage = (event) => {
+                if (event.data instanceof Blob) {
+                    const audioUrl = URL.createObjectURL(event.data);
+                    const audio = new Audio(audioUrl);
+                    audio.play();
+                    audio.onended = () => {
+                        statusDiv.textContent = "듣고 있습니다...";
+                        statusDiv.className = 'listening';
+                    };
+                } else {
+                    const message = JSON.parse(event.data);
+                    const p = document.createElement('p');
+                    p.classList.add('message');
+                    if (message.type === 'user_text') {
+                        p.innerHTML = `<span class="user">👤 나:</span> ${message.data}`;
+                    } else if (message.type === 'ai_text') {
+                        p.innerHTML = `<span class="ai">🤖 Gemini:</span> ${message.data}`;
+                    }
+                    transcriptDiv.appendChild(p);
+                    transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+                }
+            };
+            socket.onclose = () => {
+                stopVoiceActivityDetection();
+
+                // 연결이 한 번이라도 성공했다가(true) 끊어진 경우에만 종료 오버레이를 보여줍니다.
+                if (connectionEstablished) {
+                    overlay.classList.remove('hidden');
+                } else {
+                    // 페이지 로딩 시 처음부터 연결에 실패한 경우, 오류 메시지를 보여줍니다.
+                    statusDiv.textContent = "서버에 연결할 수 없습니다. 백엔드 서버가 실행 중인지 확인해주세요.";
+                }
+
+
+             //   statusDiv.textContent = "세션이 종료되었습니다.";
+                statusDiv.className = '';
+                stopVoiceActivityDetection();
+
+                // 오버레이를 표시하여 종료 상태를 명확히 함
+                overlay.classList.remove('hidden');
+            };
+
+            socket.onerror = (error) => {
+                console.error("WebSocket 오류:", error);
+                statusDiv.textContent = "연결 오류 발생!";
+                connectionEstablished = false; // 에러 발생 시 연결 실패로 간주
+            };
+
+        }
+
+        async function startVoiceActivityDetection() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: VAD_CONFIG.SAMPLE_RATE, channelCount: 1 } });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: VAD_CONFIG.SAMPLE_RATE });
+                scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                mediaStreamSource = audioContext.createMediaStreamSource(mediaStream);
+
+                scriptProcessor.onaudioprocess = (event) => {
+                    const inputData = event.inputBuffer.getChannelData(0);
+                    const rms = Math.sqrt(inputData.reduce((sum, val) => sum + val * val, 0) / inputData.length);
+
+                    if (isSpeaking) {
+                        audioBuffer.push(new Float32Array(inputData));
+                        if (rms < VAD_CONFIG.SILENCE_THRESHOLD) {
+                            if (silenceStartTime === 0) silenceStartTime = Date.now();
+                            if ((Date.now() - silenceStartTime) / 1000 >= VAD_CONFIG.SILENCE_DURATION) {
+                                processAndSendAudio();
+                                isSpeaking = false;
+                            }
+                        } else {
+                            silenceStartTime = 0;
+                        }
+                    } else if (rms > VAD_CONFIG.SILENCE_THRESHOLD) {
+                        isSpeaking = true;
+                        silenceStartTime = 0;
+                        audioBuffer = [];
+                        transcriptDiv.innerHTML = "";
+                        statusDiv.textContent = "음성 감지됨! 말하세요...";
+                        statusDiv.className = 'speaking';
+                    }
+                };
+                mediaStreamSource.connect(scriptProcessor);
+                scriptProcessor.connect(audioContext.destination);
+            } catch (err) {
+                alert("마이크 접근 오류: " + err);
+            }
+        }
+
+        function stopVoiceActivityDetection() {
+            if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
+            if (audioContext && audioContext.state !== 'closed') audioContext.close();
+        }
+
+        function processAndSendAudio() {
+            statusDiv.textContent = "음성 처리 중...";
+            statusDiv.className = 'processing';
+            const wavBlob = pcmToWavBlob(audioBuffer, VAD_CONFIG.SAMPLE_RATE);
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(wavBlob);
+            }
+        }
+        
+        // ✨✨✨ Raw PCM 데이터를 WAV 포맷 Blob으로 변환하는 헬퍼 함수 ✨✨✨
+        function pcmToWavBlob(pcmBuffers, sampleRate) {
+            let totalLength = pcmBuffers.reduce((sum, arr) => sum + arr.length, 0);
+            let buffer = new ArrayBuffer(44 + totalLength * 2);
+            let view = new DataView(buffer);
+            
+            // WAV 헤더 작성
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + totalLength * 2, true);
+            writeString(view, 8, 'WAVE');
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true); // channel
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeString(view, 36, 'data');
+            view.setUint32(40, totalLength * 2, true);
+
+            // PCM 데이터 작성
+            let offset = 44;
+            for (const pcmData of pcmBuffers) {
+                for (let i = 0; i < pcmData.length; i++, offset += 2) {
+                    let s = Math.max(-1, Math.min(1, pcmData[i]));
+                    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+                }
+            }
+            return new Blob([view], { type: 'audio/wav' });
+        }
+        
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        connectWebSocket();
+    </script>
+</body>
+</html>
