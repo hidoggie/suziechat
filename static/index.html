@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>음성 챗봇 (Push-to-Talk)</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; height: 100vh; margin: 0; background-color: #f0f2f5; padding-top: 20px; box-sizing: border-box;}
+        #container { width: 90%; max-width: 700px; text-align: center; }
+        #status { font-size: 1.2em; color: #555; margin-bottom: 20px; background-color: #e9ecef; padding: 10px 20px; border-radius: 20px; text-align: center; transition: background-color 0.3s; }
+        #recordBtn {
+            font-size: 1.5em; padding: 20px 40px; border-radius: 50px; border: none; cursor: pointer; 
+            background-color: #28a745; color: white; transition: background-color 0.3s; margin-bottom: 20px;
+        }
+        #recordBtn.recording { background-color: #dc3545; }
+        #recordBtn:disabled { background-color: #6c757d; cursor: not-allowed; }
+        #transcript { text-align: left; width: 100%; background-color: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); height: 50vh; overflow-y: auto; box-sizing: border-box;}
+        .message { margin-bottom: 12px; line-height: 1.5; }
+        .user { color: #005A9C; font-weight: bold; }
+        .ai { color: #444; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        #overlay-text { color: white; font-size: 2em; text-align: center; padding: 20px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>음성 챗봇 (버튼 제어 방식)</h1>
+        <div id="status">서버에 연결 중...</div>
+        <button id="recordBtn" disabled>🎤 녹음 시작</button>
+        <div id="transcript">
+            <p>서버에 연결되면 녹음 버튼이 활성화됩니다.</p>
+        </div>
+    </div>
+    <div id="overlay" class="hidden">
+        <div id="overlay-text">대화가 종료되었습니다.<br><br>페이지를 새로고침하여 다시 시작하세요.</div>
+    </div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const recordBtn = document.getElementById('recordBtn');
+        const transcriptDiv = document.getElementById('transcript');
+        const overlay = document.getElementById('overlay');
+        let socket;
+
+        // ✨✨✨ VAD 대신 사용할 MediaRecorder 관련 변수 ✨✨✨
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        function connectWebSocket() {
+         //   socket = new WebSocket("ws://127.0.0.1:8000/ws"); // 로컬 테스트 시
+             const socketURL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+             socket = new WebSocket(socketURL); // Render.com 등 실제 서버 배포 시
+
+            socket.onopen = () => {
+                statusDiv.textContent = "녹음 버튼을 누르고 말씀하세요.";
+                recordBtn.disabled = false;
+            };
+
+            socket.onmessage = (event) => {
+                if (event.data instanceof Blob) {
+                    const audioUrl = URL.createObjectURL(event.data);
+                    const audio = new Audio(audioUrl);
+                    audio.play();
+                    // 답변 재생이 끝나면 다시 녹음 가능하도록 버튼 활성화
+                    audio.onended = () => {
+                        recordBtn.disabled = false;
+                        statusDiv.textContent = "녹음 버튼을 누르고 말씀하세요.";
+                    };
+                } else {
+                    const message = JSON.parse(event.data);
+                    const p = document.createElement('p');
+                    p.classList.add('message');
+                    if (message.type === 'user_text') {
+                        p.innerHTML = `<span class="user">👤 나:</span> ${message.data}`;
+                    } else if (message.type === 'ai_text') {
+                        p.innerHTML = `<span class="ai">🤖 Gemini:</span> ${message.data}`;
+                    }
+                    transcriptDiv.appendChild(p);
+                    transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+                }
+            };
+
+            socket.onclose = () => {
+                stopVoiceActivityDetection();
+
+                // 연결이 한 번이라도 성공했다가(true) 끊어진 경우에만 종료 오버레이를 보여줍니다.
+                if (connectionEstablished) {
+                    overlay.classList.remove('hidden');
+                } else {
+                    // 페이지 로딩 시 처음부터 연결에 실패한 경우, 오류 메시지를 보여줍니다.
+                    statusDiv.textContent = "서버에 연결할 수 없습니다. 백엔드 서버가 실행 중인지 확인해주세요.";
+                }
+
+
+             //   statusDiv.textContent = "세션이 종료되었습니다.";
+                statusDiv.className = '';
+                stopVoiceActivityDetection();
+
+                // 오버레이를 표시하여 종료 상태를 명확히 함
+                overlay.classList.remove('hidden');
+            };
+        }
+        
+        // ✨✨✨ 녹음을 시작하는 함수 ✨✨✨
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                
+                // 녹음 데이터가 들어올 때마다 chunks 배열에 추가
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                // 녹음이 중지되면 실행될 이벤트 핸들러
+                mediaRecorder.onstop = () => {
+                    // 모인 오디오 청크들을 하나의 Blob 데이터로 만듦
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send(audioBlob); // 웹소켓을 통해 서버로 전송
+                    }
+                    audioChunks = []; // 다음 녹음을 위해 배열 비우기
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+                
+                // UI 업데이트
+                statusDiv.textContent = "말씀하세요...";
+                recordBtn.textContent = "🎙️ 녹음 중지";
+                recordBtn.classList.add('recording');
+                transcriptDiv.innerHTML = ""; // 새 대화 시 이전 내용 지우기
+
+            } catch (err) {
+                alert("마이크에 접근할 수 없습니다. 권한을 확인해주세요.");
+                console.error("마이크 접근 오류:", err);
+            }
+        }
+
+        // ✨✨✨ 녹음을 중지하는 함수 ✨✨✨
+        function stopRecording() {
+            if (mediaRecorder) {
+                mediaRecorder.stop(); // onstop 이벤트 핸들러가 자동으로 호출됨
+            }
+            isRecording = false;
+
+            // UI 업데이트
+            statusDiv.textContent = "음성을 처리 중입니다...";
+            recordBtn.textContent = "🎤 녹음 시작";
+            recordBtn.classList.remove('recording');
+            recordBtn.disabled = true; // 처리 중에는 버튼 비활성화
+        }
+
+        // ✨✨✨ 버튼 클릭 이벤트 핸들러 ✨✨✨
+        recordBtn.onclick = () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        };
+
+        connectWebSocket();
+    </script>
+</body>
+</html>
