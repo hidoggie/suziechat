@@ -17,7 +17,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 MAX_OUTPUT_TOKENS = 1500
 STT_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-412b0459f610.json"
 TTS_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-e445e48514e2.json"
-SAMPLE_RATE = 16000
+
 
 # --- 2. 전역 변수 및 앱 초기화 ---
 app = FastAPI()
