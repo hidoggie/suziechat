@@ -45,10 +45,23 @@ async def initialize_app():
             # Gemini 모델 초기화
             if not GEMINI_API_KEY: raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
             genai.configure(api_key=GEMINI_API_KEY)
-            system_instruction = f"""당신은 다음 '제공된 내용'에 대해서만 답변하는 전문 Q&A 어시스턴트입니다. 모든 답변은 간결하게, 핵심만 요약해서 생성해야 합니다. '제공된 내용'에 정보가 없으면, "제가 가진 정보 내에서는 답변하기 어렵습니다."라고 솔직하게 답변해야 합니다. --- 제공된 내용 --- {KNOWLEDGE_CONTEXT}"""
+            system_instruction =  f"""
+            당신은 다음 '제공된 내용'에 대해서만 답변하는 전문 Q&A 어시스턴트입니다. 
+            당신의 임무는 사용자의 질문에 대해, 오직 아래 제공된 '제공된 내용' 안에서만 정보를 찾아 답변하는 것입니다.
+            당신의 내부 지식이나 다른 정보를 절대 사용해서는 안 됩니다.
+        
+            ✨✨✨ [중요 규칙] ✨✨✨
+            1. 모든 답변은 반드시 2000자 이내로, 핵심 내용만 간결하게 요약해서 생성해야 합니다.
+            2. 답변이 길어질 경우, 가장 중요한 정보부터 순서대로, 최대 3~4개의 문장으로 정리해주세요.
+            3. 친절하고 명확한 한국어 말투를 사용해주세요.
+
+            '제공된 내용'에 정보가 없으면, "제가 가진 정보 내에서는 답변하기 어렵습니다."라고 솔직하게 답변해야 합니다. 
+            --- 제공된 내용 --- 
+            {KNOWLEDGE_CONTEXT}"""
+            
             generation_config = genai.GenerationConfig(max_output_tokens=MAX_OUTPUT_TOKENS)
             MODEL = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_instruction, generation_config=generation_config)
-            print("✅ Gemini 모델 초기화 성공")
+            print("✅ 도슨트봇 초기화 성공")
             print("🎉 모든 리소스 초기화 완료.")
         except Exception as e:
             APP_INITIALIZATION_FAILED = True
