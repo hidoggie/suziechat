@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Docent Bot</title>
+    <style>
+      body{
+        font-family:sans-serif;
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        justify-content:flex-start;
+        height:100vh;
+        margin:0;
+        background-color:#f0f2f5;
+        padding-top:20px;
+        box-sizing:border-box
+        }
+
+        #container{
+            width:90%;
+            max-width:700px;
+            text-align:center
+            }
+        #status{
+            font-size:1.2em;
+            color:#333;
+            margin-bottom:20px;
+            background-color:#e9ecef;
+            padding:10px 20px;
+            border-radius:20px;
+            text-align:center;
+            font-weight:700
+            }
+
+        #recordBtn,#playBtn{
+            font-size:1.5em;
+            padding:20px 40px;
+            border-radius:50px;
+            border:none;
+            cursor:pointer;
+            color:#fff;
+            transition:background-color .3s;
+            margin-bottom:20px
+        }
+        #recordBtn{background-color:#28a745}
+
+        #recordBtn.recording{
+            background-color:#dc3545
+            }
+        #recordBtn:disabled{
+            background-color:#6c757d;
+            cursor:not-allowed
+            }
+        /* ✨ 재생 버튼 스타일 추가 */
+        #playBtn { background-color: #007bff; }
+
+        #transcript{
+            text-align:left;
+            width:100%;
+            background-color:#fff;
+            border-radius:8px;
+            padding:20px;
+            box-shadow:0 2px 4px rgba(0,0,0,.1);
+            height:50vh;
+            overflow-y:auto;
+            box-sizing:border-box
+            }
+        .message{
+            margin-bottom:12px;
+            line-height:1.5
+        }
+        .user{
+            color:#005a9c;
+            font-weight:700
+        }
+        .ai{
+            color:#444
+        }
+        
+        .hidden{
+            display:none
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>AI Docent Bot</h1>
+        <div id="status">서버에 연결 중...</div>
+        <button id="recordBtn" disabled>🎤 질문 Start</button>
+        <button id="playBtn" class="hidden">▶️ 답변 듣기</button> 
+        <div id="transcript"></div>
+    </div>
+    
+    <script>
+        const statusDiv = document.getElementById('status');
+        const recordBtn = document.getElementById('recordBtn');
+        const playBtn = document.getElementById('playBtn'); // ✨ 재생 버튼 요소 가져오기
+        const transcriptDiv = document.getElementById('transcript');
+
+        let socket;
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+ // ✨ 재생할 오디오 객체를 저장할 변수
+        let audioContext; // 오디오 컨텍스트 객체
+        let lastReceivedAudioBuffer = null; // 디코딩된 오디오 데이터를 저장할 변수
+
+        // 페이지 로드 시 바로 웹소켓 연결 시작
+        connectWebSocket();   
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            const socketURL = `${protocol}//${host}/ws`;
+            socket = new WebSocket(socketURL);
+
+            socket.onopen = () => {
+                statusDiv.textContent = "Start 버튼을 누르고 말씀하세요.";
+                recordBtn.disabled = false;
+                transcriptDiv.innerHTML = "<p>도슨트봇이 준비되었습니다.</p>";
+            };
+
+            socket.onmessage = async (event) => {
+                if (event.data instanceof Blob) {
+                    console.log("서버로부터 음성(Blob) 데이터를 받았습니다.");
+
+                // ✨ 받은 Blob을 ArrayBuffer로 변환하여 저장
+                    lastReceivedAudioBuffer = await event.data.arrayBuffer();
+ 
+                    // UI 업데이트
+                    statusDiv.textContent = "답변이 도착했습니다. 듣기 버튼을 눌러주세요.";
+                    recordBtn.disabled = true;
+                    playBtn.classList.remove('hidden');
+
+                } else {
+                    const message = JSON.parse(event.data);
+                    addMessageToTranscript(message.type, message.data);
+                }
+            };
+
+            socket.onclose = () => {
+                alert("서버와의 연결이 종료되었습니다. 페이지를 새로고침 해주세요.");
+                statusDiv.textContent = "연결 종료됨";
+                recordBtn.disabled = true;
+                playBtn.classList.add('hidden');
+            };
+        }
+
+        // ✨✨✨ Web Audio API를 사용하여 오디오를 재생하는 새로운 함수 ✨✨✨
+        function playAudioBuffer(buffer) {
+            if (!audioContext) {
+                console.log("새 AudioContext를 생성합니다.");
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            // iOS에서 오디오 컨텍스트가 정지 상태일 수 있으므로 재생 전에 항상 활성화 시도
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+
+            // ArrayBuffer를 디코딩하여 오디오 소스로 만듦
+            audioContext.decodeAudioData(buffer, (decodedBuffer) => {
+                const source = audioContext.createBufferSource();
+                source.buffer = decodedBuffer;
+                source.connect(audioContext.destination);
+                source.start(0); // 즉시 재생
+
+                // 재생이 끝나면 녹음 버튼 활성화
+                source.onended = () => {
+                    console.log("음성 재생이 완료되었습니다.");
+                    statusDiv.textContent = "녹음 버튼을 누르고 말씀하세요.";
+                    recordBtn.disabled = false;
+                };
+            }, (error) => {
+                console.error("오디오 디코딩 오류:", error);
+                alert("오디오 파일을 재생할 수 없습니다.");
+                recordBtn.disabled = false; // 오류 시에도 버튼 활성화
+            });
+        }
+        
+        // ✨ 재생 버튼 클릭 이벤트 핸들러 수정
+        playBtn.onclick = () => {
+            if (lastReceivedAudioBuffer) {
+                console.log("재생 버튼 클릭됨. Web Audio API로 재생합니다.");
+                playAudioBuffer(lastReceivedAudioBuffer.slice(0)); // 버퍼 복사본 전달
+                lastReceivedAudioBuffer = null; // 한 번만 재생하도록 버퍼 비우기
+                statusDiv.textContent = "답변을 재생합니다...";
+                playBtn.classList.add('hidden');
+            }
+        };
+
+        
+        async function startRecording() {
+            if (!audioContext) {
+                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                 if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                 }
+            }
+            // 이하 로직은 이전과 동일
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    if (socket?.readyState === WebSocket.OPEN) socket.send(audioBlob);
+                    audioChunks = [];
+                };
+                mediaRecorder.start();
+                isRecording = true;
+                transcriptDiv.innerHTML = "";
+                statusDiv.textContent = "말씀하세요...";
+                recordBtn.textContent = "🎙️ 녹음 중지";
+                recordBtn.classList.add('recording');
+                playBtn.classList.add('hidden');
+            } catch (err) { alert("마이크에 접근할 수 없습니다."); }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder) mediaRecorder.stop();
+            isRecording = false;
+            statusDiv.textContent = "음성을 처리 중입니다...";
+            recordBtn.textContent = "🎤 질문 Start";
+            recordBtn.classList.remove('recording');
+            recordBtn.disabled = true;
+        }
+
+        function addMessageToTranscript(sender, text) {
+            const p = document.createElement('p');
+            p.classList.add('message');
+            p.innerHTML = `<span class="${sender === 'user' ? 'user' : 'ai'}">${sender === 'user' ? '👤 나:' : '🤖 DocentBot:'}</span> ${text}`;
+            transcriptDiv.appendChild(p);
+            transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+        }
+
+        recordBtn.onclick = () => { isRecording ? stopRecording() : startRecording(); };
+//        connectWebSocket();
+    </script>
+</body>
+</html>
