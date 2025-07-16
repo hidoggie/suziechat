@@ -1,7 +1,0 @@
-# requirements.txt (진단용 최소 버전)
-
-fastapi
-uvicorn
-gunicorn
-websockets
-google-cloud-speech
