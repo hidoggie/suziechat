@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+gunicorn
+websockets
+python-multipart
+google-generativeai
+google-cloud-speech
+google-cloud-texttospeech
+numpy
