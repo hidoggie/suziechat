@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Gemini 음성 챗봇</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style> /* 이전과 동일한 CSS */ </style>
+</head>
+<body>
+    <div id="container">
+        <h1>음성/텍스트 챗봇</h1>
+        <div id="status">서버 연결 중...</div>
+        <div id="transcript"></div>
+        <div id="input-area">
+            <button id="recordBtn" disabled>🎤</button>
+            <input type="text" id="text-input" placeholder="텍스트로 질문하세요..." disabled>
+            <button id="send-btn" disabled>전송</button>
+        </div>
+        <button id="playBtn" class="hidden" style="margin-top: 10px;">▶️ 답변 듣기</button>
+    </div>
+
+<script>
+    // --- 요소 가져오기 ---
+    const statusDiv = document.getElementById('status');
+    const recordBtn = document.getElementById('recordBtn');
+    const playBtn = document.getElementById('playBtn');
+    const transcriptDiv = document.getElementById('transcript');
+    const textInput = document.getElementById('text-input');
+    const sendBtn = document.getElementById('send-btn');
+    
+    // --- 상태 변수 ---
+    let socket;
+    let mediaRecorder;
+    let audioChunks = [];
+    let isRecording = false;
+    let lastInputWasVoice = false;
+    let audioContext;
+    let lastReceivedAudioBlob = null;
+    let connectionEstablished = false;
+
+    // --- 헬퍼 함수 ---
+    function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream; }
+    
+    function addMessageToTranscript(type, text) {
+        const p = document.createElement('p');
+        p.classList.add('message');
+        if (type === 'user_text') {
+            p.innerHTML = `<span class="user">👤 나:</span> ${text}`;
+        } else if (type === 'ai_text') {
+            p.innerHTML = `<span class="ai">🤖 Gemini:</span> ${text}`;
+        } else { // 'system' 메시지 등
+            p.innerHTML = `<span class="system" style="color: #6c757d; font-style: italic;">${text}</span>`;
+        }
+        transcriptDiv.appendChild(p);
+        transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+    }
+
+    function disableInputs() { recordBtn.disabled = true; sendBtn.disabled = true; textInput.disabled = true; }
+    function enableInputs() { recordBtn.disabled = false; sendBtn.disabled = false; textInput.disabled = false; }
+    
+    // --- 웹소켓 로직 ---
+    function connectWebSocket() {
+        const socketURL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+        socket = new WebSocket(socketURL);
+
+        socket.onopen = () => {
+            connectionEstablished = true;
+            statusDiv.textContent = "입력 방식을 선택하세요.";
+            enableInputs();
+            addMessageToTranscript('system', '챗봇이 준비되었습니다.');
+        };
+
+        socket.onmessage = async (event) => {
+            if (event.data instanceof Blob) {
+                lastReceivedAudioBlob = event.data;
+                const shouldAutoplay = lastInputWasVoice && !isIOS();
+                if (shouldAutoplay) {
+                    playReceivedAudio(true);
+                } else {
+                    playBtn.classList.remove('hidden');
+                    enableInputs();
+                }
+            } else {
+                const message = JSON.parse(event.data);
+                addMessageToTranscript(message.type, message.data);
+            }
+        };
+
+        socket.onclose = () => {
+            disableInputs();
+            if (connectionEstablished) {
+                addMessageToTranscript('system', '서버와의 세션이 종료되었습니다. 다시 시작하려면 페이지를 새로고침하세요.');
+            } else {
+                addMessageToTranscript('system', '서버에 연결할 수 없습니다. 백엔드 서버가 실행 중인지 확인해주세요.');
+            }
+            statusDiv.textContent = '연결 종료됨';
+        };
+        socket.onerror = () => { addMessageToTranscript('system', '연결 오류 발생!'); };
+    }
+
+    // --- 이벤트 핸들러 및 기능 함수 ---
+    recordBtn.onclick = () => isRecording ? stopRecording() : startRecording();
+    sendBtn.onclick = sendTextMessage;
+    textInput.addEventListener('keyup', e => { if (e.key === 'Enter') sendTextMessage(); });
+    playBtn.onclick = () => playReceivedAudio(false);
+
+    function sendTextMessage() {
+        const text = textInput.value.trim();
+        if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
+        lastInputWasVoice = false;
+        socket.send(JSON.stringify({ type: 'text', data: text }));
+        addMessageToTranscript('user_text', text);
+        textInput.value = "";
+        disableInputs();
+        playBtn.classList.add('hidden');
+    }
+
+    async function startRecording() {
+        lastInputWasVoice = true;
+        disableInputs();
+        recordBtn.disabled = false;
+        playBtn.classList.add('hidden');
+        transcriptDiv.innerHTML = "";
+        
+        try {
+            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioContext.state === 'suspended') await audioContext.resume();
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+            audioChunks = [];
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob);
+                reader.onloadend = () => {
+                    const base64Audio = reader.result.split(',')[1];
+                    if (socket?.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({ type: 'audio', data: base64Audio }));
+                    }
+                };
+            };
+            mediaRecorder.start();
+            isRecording = true;
+            statusDiv.textContent = "말씀하세요...";
+            recordBtn.textContent = "🎙️";
+            recordBtn.classList.add('recording');
+        } catch (err) {
+            alert("마이크에 접근할 수 없습니다.");
+            enableInputs();
+        }
+    }
+
+    function stopRecording() {
+        if (mediaRecorder) mediaRecorder.stop();
+        isRecording = false;
+        statusDiv.textContent = "음성을 처리 중입니다...";
+        recordBtn.textContent = "🎤";
+        recordBtn.classList.remove('recording');
+        disableInputs();
+    }
+    
+    async function playReceivedAudio(isAutoplay = false) {
+        if (!lastReceivedAudioBlob) return;
+        if (!isAutoplay) playBtn.classList.add('hidden');
+        statusDiv.textContent = "답변을 재생합니다...";
+        
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === 'suspended') await audioContext.resume();
+        
+        try {
+            const arrayBuffer = await lastReceivedAudioBlob.arrayBuffer();
+            const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            const source = audioContext.createBufferSource();
+            source.buffer = decodedBuffer;
+            source.connect(audioContext.destination);
+            source.start(0);
+
+            source.onended = () => {
+                // ✨✨✨ 바로 이 부분의 함수 이름을 수정했습니다. ✨✨✨
+                addMessageToTranscript('system', '답변 재생이 완료되었습니다.');
+                enableInputs();
+            };
+        } catch(e) {
+            console.error("오디오 재생 중 오류:", e);
+            addMessageToTranscript('system', `오디오 재생 오류: ${e.message}`);
+            enableInputs();
+        } finally {
+            lastReceivedAudioBlob = null;
+        }
+    }
+    
+    // 페이지가 완전히 로드된 후 스크립트 실행
+    connectWebSocket();
+
+</script>
+</body>
+</html>
