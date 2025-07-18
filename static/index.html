@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Docent Bot</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <Style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body, html {
+      height: 100%;
+    }
+
+        body, input, button { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; font-size: 16px; }
+        body { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; margin: 0; background-color: #f0f2f5; padding: 10px; box-sizing: border-box;}
+        #container { display: flex; flex-direction: column; width: 100%; max-width: 700px; height: 100vh; }
+        #transcript { height: 70vh; border: 1px solid #ccc; padding: 10px; overflow-y: scroll; margin-bottom: 10px; background-color: #fff; border-radius: 8px; }
+        #input-area { height: auto; display: flex; gap: 10px; margin-bottom: 10px; }
+        #text-input { width: 65vw; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        #recordBtn, #send-btn, #playBtn { width: 15vw; border-radius: 5px; border: none; color: white; cursor: pointer; font-size: 1em; }
+        #recordBtn { background-color: #28a745; }
+        #recordBtn.recording { background-color: #dc3545; }
+        #send-btn { background-color: #007bff; }
+        #playBtn { background-color: #17a2b8; width: 100%; }
+        #playBtn.playing { background-color: #fd7e14; }
+        .hidden { display: none; }
+        .message { margin-bottom: 12px; line-height: 1.5; }
+        .user { color: #005A9C; font-weight: bold; }
+        .ai { color: #444; }
+        .system { color: #6c757d; font-style: italic; text-align: center; }
+
+        @media (max-width: 700px) {
+          input-area {
+           flex-direction: column;
+           height: auto;
+          }
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="transcript"></div>
+        <div id="input-area">
+            <button id="recordBtn">🎤</button>
+            <input type="text" id="text-input" placeholder="텍스트로 질문하세요...">
+            <button id="send-btn">전송</button>
+        </div>
+        <button id="playBtn" class="hidden">▶️ 답변 듣기</button>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const recordBtn = document.getElementById('recordBtn'), playBtn = document.getElementById('playBtn'), transcriptDiv = document.getElementById('transcript'), textInput = document.getElementById('text-input'), sendBtn = document.getElementById('send-btn');
+        let socket, mediaRecorder, audioChunks = [], isRecording = false;
+        let lastInputWasVoice = false, audioContext = null, currentAudioSource = null;
+
+        function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream; }
+        function addLog(type, text) { const p = document.createElement('p'); p.className = 'message ' + type; p.innerHTML = type === 'user_text' ? `<strong>👤 나:</strong> ${text}` : type === 'ai_text' ? `<strong>🤖 DocentBot:</strong> ${text}` : `<span class="system">${text}</span>`; transcriptDiv.appendChild(p); transcriptDiv.scrollTop = transcriptDiv.scrollHeight; }
+        function setInputs(enabled) { recordBtn.disabled = !enabled; sendBtn.disabled = !enabled; textInput.disabled = !enabled; }
+
+        function connectWebSocket() {
+            const socketURL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+            socket = new WebSocket(socketURL);
+            socket.onopen = () => { setInputs(true); addLog('system', '챗봇이 준비되었습니다.'); };
+            socket.onmessage = async (event) => {
+                if (event.data instanceof Blob) {
+                    const audioBlob = event.data;
+                    const shouldAutoplay = lastInputWasVoice && !isIOS();
+                    if (shouldAutoplay) {
+                        playReceivedAudio(audioBlob);
+                    } else {
+                        playBtn.onclick = () => playReceivedAudio(audioBlob);
+                        playBtn.classList.remove('hidden');
+                        setInputs(true);
+                    }
+                } else {
+                    const message = JSON.parse(event.data);
+
+
+            // ✨ 이미지 메시지 타입 처리
+                    if (message.type === 'ai_image') {
+                       const img = document.createElement('img');
+                       img.src = message.url;
+                       img.style.maxWidth = '100%';
+                       img.style.borderRadius = '8px';
+                       img.style.marginTop = '10px';
+                       transcriptDiv.appendChild(img);
+                       transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+                    } else {
+                // 기존 텍스트 메시지 처리
+ //                      addMessageToTranscript(message.type, message.data);
+                      addLog(message.type, message.data);
+                      if (message.type === 'error') { setInputs(false); }
+                    }
+                   
+                }
+            };
+            socket.onclose = () => { addLog('system', '서버 연결이 종료되었습니다.'); setInputs(false); };
+        }
+
+        function sendTextMessage() {
+            const text = textInput.value.trim();
+            if (!text || socket?.readyState !== WebSocket.OPEN) return;
+            lastInputWasVoice = false;
+            socket.send(JSON.stringify({ type: 'text', data: text }));
+            addLog('user_text', text);
+            textInput.value = "";
+            setInputs(false);
+            playBtn.classList.add('hidden');
+        }
+
+        async function startRecording() {
+            lastInputWasVoice = true;
+            setInputs(false); recordBtn.disabled = false;
+            playBtn.classList.add('hidden');
+            try {
+                if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioContext.state === 'suspended') await audioContext.resume();
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+                audioChunks = [];
+                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const reader = new FileReader();
+                    reader.readAsDataURL(audioBlob);
+                    reader.onloadend = () => {
+                        const base64Audio = reader.result.split(',')[1];
+                        if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'audio', data: base64Audio }));
+                    };
+                };
+                mediaRecorder.start();
+                isRecording = true;
+                recordBtn.textContent = "🎙️";
+                recordBtn.classList.add('recording');
+            } catch (err) { alert("마이크에 접근할 수 없습니다."); setInputs(true); }
+        }
+
+        function stopRecording() { if (mediaRecorder) mediaRecorder.stop(); isRecording = false; recordBtn.textContent = "🎤"; recordBtn.classList.remove('recording'); setInputs(false); }
+        
+        async function playReceivedAudio(audioBlob) {
+            if (currentAudioSource) currentAudioSource.stop();
+            if (!audioBlob) return;
+            
+            playBtn.classList.remove('hidden');
+            playBtn.textContent = "⏸️ 듣기 중지";
+            playBtn.onclick = stopCurrentAudio;
+            setInputs(false);
+
+            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioContext.state === 'suspended') await audioContext.resume();
+            
+            try {
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                currentAudioSource = audioContext.createBufferSource();
+                currentAudioSource.buffer = decodedBuffer;
+                currentAudioSource.connect(audioContext.destination);
+                currentAudioSource.start(0);
+                currentAudioSource.onended = () => { if (currentAudioSource) stopCurrentAudio(false); };
+            } catch(e) { console.error("오디오 재생 오류:", e); stopCurrentAudio(false); }
+        }
+
+        function stopCurrentAudio(isManualStop = true) {
+            if (currentAudioSource) {
+                currentAudioSource.onended = null;
+                if(isManualStop) currentAudioSource.stop();
+                currentAudioSource = null;
+            }
+            playBtn.classList.add('hidden');
+            playBtn.textContent = "▶️ 답변 듣기";
+            setInputs(true);
+        }
+
+        recordBtn.onclick = () => isRecording ? stopRecording() : startRecording();
+        sendBtn.onclick = sendTextMessage;
+        textInput.addEventListener('keyup', e => { if (e.key === 'Enter') sendTextMessage(); });
+        
+        connectWebSocket();
+    });
+    </script>
+</body>
+</html>
