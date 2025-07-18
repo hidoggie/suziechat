@@ -8,3 +8,4 @@ google-cloud-speech
 google-cloud-texttospeech
 numpy
 PyMuPDF
+Pillow
