@@ -84,36 +84,34 @@
         });
         
          // ✨ 음성 안내 버튼은 준비된 오디오를 재생만 하도록 수정
-    arTtsBtn.onclick = async () => {
+   arTtsBtn.onclick = async () => {
     const text = arText.textContent;
     if (!text) return;
 
-    // UI 피드백: 버튼을 비활성화하고 로딩 상태로 변경
     arTtsBtn.disabled = true;
     arTtsBtn.textContent = "🔊 생성 중...";
 
     try {
-        // 1. 화면의 텍스트를 백엔드의 /api/tts 엔드포인트로 전송
         const response = await fetch('/api/tts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text_to_speak: text })
+            // FastAPI가 embed=True를 사용하므로, 한 번 더 감싸서 보냅니다.
+            body: JSON.stringify({ "text_to_speak": text })
         });
 
         if (!response.ok) {
-            throw new Error(`서버 응답 오류: ${response.status}`);
+            // 서버가 500 오류 등을 반환했을 때 처리
+            const errorData = await response.json();
+            throw new Error(errorData.detail || `서버 응답 오류: ${response.status}`);
         }
         
         const data = await response.json();
 
         if (data.audio) {
-            // 2. 받은 Base64 오디오 데이터를 디코딩하고 Web Audio API로 재생 (iOS 호환)
             if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
             if (audioContext.state === 'suspended') await audioContext.resume();
 
-            // atob()는 Base64 문자열을 디코딩합니다.
-            const audioBlob = new Blob([Uint8Array.from(atob(data.audio), c => c.charCodeAt(0))], {type: 'audio/mp3'});
-            const arrayBuffer = await audioBlob.arrayBuffer();
+            const arrayBuffer = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0)).buffer;
             const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
             
             const source = audioContext.createBufferSource();
@@ -121,19 +119,16 @@
             source.connect(audioContext.destination);
             source.start(0);
 
-            // 재생이 끝나면 버튼을 원래 상태로 복구
             source.onended = () => {
                 arTtsBtn.disabled = false;
                 arTtsBtn.textContent = "🔊 음성 안내";
             };
-
         } else {
-            throw new Error(data.error || "서버로부터 오디오 데이터를 받지 못했습니다.");
+            throw new Error("서버로부터 오디오 데이터를 받지 못했습니다.");
         }
     } catch (e) {
         console.error("TTS 오류:", e);
-        alert("음성을 생성하는 데 실패했습니다.");
-        // 오류 발생 시에도 버튼을 원래 상태로 복구
+        alert(`음성을 생성하는 데 실패했습니다: ${e.message}`);
         arTtsBtn.disabled = false;
         arTtsBtn.textContent = "🔊 음성 안내";
     }
