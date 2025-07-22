@@ -1,18 +1,138 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Basic AR Test</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; }
+        .ar-overlay { position: fixed; bottom: 0; left: 0; right: 0; z-index: 10; padding: 20px; box-sizing: border-box; pointer-events: none; }
+        .ar-button { padding: 10px 20px; font-size: 1.2em; border-radius: 5px; border: none; background-color: rgba(0,0,0,0.6); color: white; cursor: pointer; pointer-events: all; }
+        #ar-description-box { background-color: rgba(0,0,0,0.7); color: white; padding: 15px; border-radius: 10px; max-height: 40vh; overflow-y: auto; pointer-events: all; margin: 0 auto 20px auto; max-width: 90%; }
+        .hidden { display: none; }
+    </style>
 </head>
 <body style="margin: 0; overflow: hidden;">
-    <a-scene embedded arjs='sourceType: webcam; debugUIEnabled: false;'>
+    <a-scene
+        vr-mode-ui="enabled: false;"
+        renderer="logarithmicDepthBuffer: true; colorManagement: true;"
+        embedded
+        arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;">
         
-        <a-box position="0 0.5 -3" material="color: red;"></a-box>
+        <a-nft
+            id="image-marker"
+            type="nft"
+            url="/static/markers/target1/image"
+            smooth="true"
+            smoothCount="10"
+            smoothTolerance=".01"
+            smoothThreshold="5">
+            </a-nft>
 
         <a-entity camera></a-entity>
-
     </a-scene>
+
+    <div class="ar-overlay">
+        <div id="ar-description-box" class="hidden">
+            <p id="ar-text"></p>
+            <button id="ar-tts-btn" class="ar-button" style="margin-top: 10px; width: 100%;">🔊 음성 안내</button>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+        const marker = document.querySelector("#image-marker");
+        const descriptionBox = document.getElementById('ar-description-box');
+        const arText = document.getElementById('ar-text');
+        const arTtsBtn = document.getElementById('ar-tts-btn');
+        let contentMap = {};
+        
+        try {
+            const response = await fetch('/api/pdf-content');
+            contentMap = await response.json();
+        } catch(e) {
+            alert('컨텐츠 데이터를 불러오는 데 실패했습니다.');
+        }
+
+        marker.addEventListener('markerFound', () => {
+            console.log("Marker Found!");
+            // ✨ 여기에 어떤 이미지와 텍스트를 연결할 지 정의해야 합니다.
+            // 이 예제에서는 첫번째 이미지(page_0_img_0.png)에 대한 설명을 보여줍니다.
+            const testImageName = "page_0_img_0.png"; // 1단계에서 마커를 생성한 이미지 파일 이름
+            const textToShow = contentMap[testImageName];
+
+            if (textToShow) {
+                arText.textContent = textToShow;
+                descriptionBox.classList.remove('hidden');
+            } else {
+                arText.textContent = "이 이미지에 대한 설명을 찾을 수 없습니다.";
+                descriptionBox.classList.remove('hidden');
+
+            }
+        });
+
+        marker.addEventListener('markerLost', () => {
+            console.log("Marker Lost!");
+            descriptionBox.classList.add('hidden');
+        });
+
+         // ✨ 음성 안내 버튼은 준비된 오디오를 재생만 하도록 수정
+    arTtsBtn.onclick = async () => {
+    const text = arText.textContent;
+    if (!text) return;
+
+    // UI 피드백: 버튼을 비활성화하고 로딩 상태로 변경
+    arTtsBtn.disabled = true;
+    arTtsBtn.textContent = "🔊 생성 중...";
+
+    try {
+        // 1. 화면의 텍스트를 백엔드의 /api/tts 엔드포인트로 전송
+        const response = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text_to_speak: text })
+        });
+
+        if (!response.ok) {
+            throw new Error(`서버 응답 오류: ${response.status}`);
+        }
+        
+        const data = await response.json();
+
+        if (data.audio) {
+            // 2. 받은 Base64 오디오 데이터를 디코딩하고 Web Audio API로 재생 (iOS 호환)
+            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioContext.state === 'suspended') await audioContext.resume();
+
+            // atob()는 Base64 문자열을 디코딩합니다.
+            const audioBlob = new Blob([Uint8Array.from(atob(data.audio), c => c.charCodeAt(0))], {type: 'audio/mp3'});
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            
+            const source = audioContext.createBufferSource();
+            source.buffer = decodedBuffer;
+            source.connect(audioContext.destination);
+            source.start(0);
+
+            // 재생이 끝나면 버튼을 원래 상태로 복구
+            source.onended = () => {
+                arTtsBtn.disabled = false;
+                arTtsBtn.textContent = "🔊 음성 안내";
+            };
+
+        } else {
+            throw new Error(data.error || "서버로부터 오디오 데이터를 받지 못했습니다.");
+        }
+    } catch (e) {
+        console.error("TTS 오류:", e);
+        alert("음성을 생성하는 데 실패했습니다.");
+        // 오류 발생 시에도 버튼을 원래 상태로 복구
+        arTtsBtn.disabled = false;
+        arTtsBtn.textContent = "🔊 음성 안내";
+    }
+};
+
+    });
+    </script>
 </body>
-</html>
+</html>                              
