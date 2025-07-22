@@ -14,8 +14,9 @@
 </head>
 <body style="margin: 0; overflow: hidden;">
     <a-scene
+        id="ar-scene"
         vr-mode-ui="enabled: false;"
-        renderer="logarithmicDepthBuffer: true; colorManagement: true;"
+        renderer="logarithmicDepthBuffer: true; antialias: true; colorManagement: true;"
         embedded
         arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;">
         
@@ -41,6 +42,7 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', async () => {
+        const sceneEl = document.querySelector("#ar-scene");
         const marker = document.querySelector("#image-marker");
         const descriptionBox = document.getElementById('ar-description-box');
         const arText = document.getElementById('ar-text');
@@ -54,28 +56,34 @@
             alert('컨텐츠 데이터를 불러오는 데 실패했습니다.');
         }
 
+        // 4. 마커(이미지)가 찾아졌을 때 실행될 로직
         marker.addEventListener('markerFound', () => {
             console.log("Marker Found!");
-            // ✨ 여기에 어떤 이미지와 텍스트를 연결할 지 정의해야 합니다.
-            // 이 예제에서는 첫번째 이미지(page_10_img_0.png)에 대한 설명을 보여줍니다.
-            const testImageName = "page_10_img_0.png"; // 1단계에서 마커를 생성한 이미지 파일 이름
+            // 이 예제에서는 첫번째 이미지(page_0_img_0.png)에 대한 설명을 보여줍니다.
+            const testImageName = "page_0_img_0.png"; // 마커를 생성한 이미지 파일 이름
             const textToShow = contentMap[testImageName];
 
             if (textToShow) {
                 arText.textContent = textToShow;
                 descriptionBox.classList.remove('hidden');
-            } else {
-                arText.textContent = "이 이미지에 대한 설명을 찾을 수 없습니다.";
-                descriptionBox.classList.remove('hidden');
-
             }
         });
 
+        // 5. 마커(이미지)를 잃어버렸을 때 실행될 로직
         marker.addEventListener('markerLost', () => {
             console.log("Marker Lost!");
             descriptionBox.classList.add('hidden');
         });
-
+        
+        // ✨ 6. 줌 문제 해결을 위한 최종 코드 ✨
+        // AR.js가 완전히 로드된 후, 화면 크기를 강제로 재조정합니다.
+        sceneEl.addEventListener('loaded', () => {
+            setTimeout(() => {
+                window.dispatchEvent(new Event('resize'));
+                console.log("Forcing resize to fix camera zoom.");
+            }, 500);
+        });
+        
          // ✨ 음성 안내 버튼은 준비된 오디오를 재생만 하도록 수정
     arTtsBtn.onclick = async () => {
     const text = arText.textContent;
