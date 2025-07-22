@@ -16,9 +16,8 @@
     <a-scene
         id="ar-scene"
         vr-mode-ui="enabled: false;"
-        renderer="logarithmicDepthBuffer: true; antialias: true; colorManagement: true;"
-        
-        arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;">
+        renderer="logarithmicDepthBuffer: true; antialias: true; colorManagement: true;"        
+        arjs="sourceType: webcam; debugUIEnabled: false;">
         
         <a-nft
             id="image-marker"
@@ -60,8 +59,8 @@
         marker.addEventListener('markerFound', () => {
             console.log("Marker Found!");
             // 이 예제에서는 첫번째 이미지(page_10_img_0.png)에 대한 설명을 보여줍니다.
-            const testImageName = "page_10_img_0.png"; // 마커를 생성한 이미지 파일 이름
-            const textToShow = contentMap[testImageName];
+            const targetImageName = "page_10_img_0.png"; // 마커를 생성한 이미지 파일 이름
+            const textToShow = contentMap[targetImageName];
 
             if (textToShow) {
                 arText.textContent = textToShow;
