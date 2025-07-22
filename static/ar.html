@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; }
+        .ar-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; box-sizing: border-box; pointer-events: none;}
+        .ar-button { padding: 10px 20px; font-size: 1.2em; border-radius: 5px; border: none; background-color: rgba(0,0,0,0.6); color: white; cursor: pointer; pointer-events: all; }
+        #ar-description-box { background-color: rgba(0,0,0,0.7); color: white; padding: 15px; border-radius: 10px; max-height: 40%; overflow-y: auto; pointer-events: all; margin: 0 auto 20px auto; max-width: 90%; }
+        .hidden { display: none; }
+        #loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); z-index: 2000; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; font-size: 1.5em; }
+        .spinner { border: 8px solid #f3f3f3; border-top: 8px solid #3498db; border-radius: 50%; width: 60px; height: 60px; animation: spin 2s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <a-scene id="ar-scene" mindar-image="imageTargetSrc: /static/targets.mind; autoStart: false; uiLoading: no; uiScanning: no;" 
+             color-space="sRGB" renderer="colorManagement: true, physicallyCorrectLights" vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false">
+        <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+        </a-scene>
+
+    <div class="ar-overlay">
+        <div id="loading-overlay">
+            <div class="spinner"></div>
+            <p style="margin-top: 20px;">AR 엔진을 준비 중입니다...</p>
+        </div>
+        <div></div> 
+        <div id="ar-description-box" class="hidden">
+            <p id="ar-text"></p>
+            <button id="ar-tts-btn" class="ar-button" style="margin-top: 10px; width: 100%;">🔊 음성 안내</button>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+        const sceneEl = document.querySelector('a-scene');
+        const descriptionBox = document.getElementById('ar-description-box');
+        const arText = document.getElementById('ar-text');
+        const arTtsBtn = document.getElementById('ar-tts-btn');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        
+        let pdfContent = [];
+        let audioContext;
+
+        try {
+            console.log("1. PDF 컨텐츠를 서버에서 가져옵니다...");
+            const response = await fetch('/api/pdf-content');
+            if (!response.ok) throw new Error(`서버 응답 오류: ${response.status}`);
+            pdfContent = await response.json();
+            console.log("2. PDF 컨텐츠 로딩 완료:", pdfContent);
+
+            if (!pdfContent || pdfContent.length === 0) {
+                throw new Error("서버에서 받은 PDF 컨텐츠가 비어있습니다.");
+            }
+
+            const allImages = pdfContent.flatMap(p => p.images);
+            console.log("3. 인식할 전체 이미지 목록:", allImages);
+
+            // ✨ 1. A-Frame 엔티티를 미리 생성
+            allImages.forEach((imageName, index) => {
+                const entity = document.createElement('a-entity');
+                entity.setAttribute('mindar-image-target', `targetIndex: ${index}`);
+                sceneEl.appendChild(entity);
+            });
+
+            const arSystem = sceneEl.systems['mindar-image-system'];
+            
+            sceneEl.addEventListener('arready', () => {
+                loadingOverlay.classList.add('hidden');
+                console.log("5. MindAR 엔진 준비 완료!");
+            });
+
+            // ✨ 2. AR 시스템에 이벤트 리스너를 직접 연결 (가장 안정적인 방식)
+            arSystem.on("targetFound", event => {
+                console.log("6. 타겟을 찾았습니다!", event.detail);
+                const targetIndex = event.detail.target.index;
+                const foundImageName = allImages[targetIndex];
+                
+                if (foundImageName) {
+                    const page = pdfContent.find(p => p.images.includes(foundImageName));
+                    if (page) {
+                        console.log("7. 이미지에 해당하는 페이지 정보를 찾았습니다.");
+                        arText.textContent = page.text;
+                        descriptionBox.classList.remove('hidden');
+                    } else {
+                        console.error("8. 오류: 이미지에 해당하는 페이지 정보를 찾지 못했습니다.");
+                    }
+                }
+            });
+
+            arSystem.on("targetLost", event => {
+                console.log("타겟을 잃어버렸습니다.");
+                descriptionBox.classList.add('hidden');
+            });
+            
+            console.log("4. MindAR 엔진을 시작합니다...");
+            await arSystem.start();
+
+        } catch (e) {
+            loadingOverlay.classList.add('hidden');
+            console.error("AR 초기화 중 심각한 오류 발생:", e);
+            alert(`AR 기능 시작 중 오류가 발생했습니다: ${e.message}`);
+        }
+        
+
+         // ✨ 음성 안내 버튼은 준비된 오디오를 재생만 하도록 수정
+    arTtsBtn.onclick = async () => {
+    const text = arText.textContent;
+    if (!text) return;
+
+    // UI 피드백: 버튼을 비활성화하고 로딩 상태로 변경
+    arTtsBtn.disabled = true;
+    arTtsBtn.textContent = "🔊 생성 중...";
+
+    try {
+        // 1. 화면의 텍스트를 백엔드의 /api/tts 엔드포인트로 전송
+        const response = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text_to_speak: text })
+        });
+
+        if (!response.ok) {
+            throw new Error(`서버 응답 오류: ${response.status}`);
+        }
+        
+        const data = await response.json();
+
+        if (data.audio) {
+            // 2. 받은 Base64 오디오 데이터를 디코딩하고 Web Audio API로 재생 (iOS 호환)
+            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioContext.state === 'suspended') await audioContext.resume();
+
+            // atob()는 Base64 문자열을 디코딩합니다.
+            const audioBlob = new Blob([Uint8Array.from(atob(data.audio), c => c.charCodeAt(0))], {type: 'audio/mp3'});
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            
+            const source = audioContext.createBufferSource();
+            source.buffer = decodedBuffer;
+            source.connect(audioContext.destination);
+            source.start(0);
+
+            // 재생이 끝나면 버튼을 원래 상태로 복구
+            source.onended = () => {
+                arTtsBtn.disabled = false;
+                arTtsBtn.textContent = "🔊 음성 안내";
+            };
+
+        } else {
+            throw new Error(data.error || "서버로부터 오디오 데이터를 받지 못했습니다.");
+        }
+    } catch (e) {
+        console.error("TTS 오류:", e);
+        alert("음성을 생성하는 데 실패했습니다.");
+        // 오류 발생 시에도 버튼을 원래 상태로 복구
+        arTtsBtn.disabled = false;
+        arTtsBtn.textContent = "🔊 음성 안내";
+    }
+};
+
+    });
+    </script>
+</body>
+</html>
