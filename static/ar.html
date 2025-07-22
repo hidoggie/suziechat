@@ -47,6 +47,8 @@
         const arText = document.getElementById('ar-text');
         const arTtsBtn = document.getElementById('ar-tts-btn');
         let contentMap = {};
+
+        let audioContext;
         
         try {
             const response = await fetch('/api/pdf-content');
