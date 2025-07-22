@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
                 
             """
         generation_config = genai.GenerationConfig(max_output_tokens=MAX_OUTPUT_TOKENS)
-        MODEL = genai.GenerativeModel('gemini-1.5-pro-flash', system_instruction=system_instruction, generation_config=generation_config)
+        MODEL = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_instruction, generation_config=generation_config)
         
         print("🎉 모든 리소스 초기화 완료. 챗봇이 준비되었습니다.")
     except Exception as e:
