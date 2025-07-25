@@ -108,6 +108,8 @@
     const text = arText.textContent;
     if (!text) return;
 
+    let currentAudio = null; 
+
     // 재생/중지 토글 로직
     if (currentAudio && !currentAudio.paused) {
         currentAudio.pause();
@@ -124,8 +126,6 @@
 
     arTtsBtn.disabled = true;
     arTtsBtn.textContent = "🔊 생성 중...";
-    let currentAudio = null;
-
 
 
     try {
