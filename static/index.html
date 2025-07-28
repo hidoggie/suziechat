@@ -118,7 +118,7 @@
                     }
                 } else {
                     const message = JSON.parse(event.data);
-                    addMessageToTranscript(message.type, message);
+                    addMessageToTranscript(message.type, message.data);
                 }
             };
             socket.onclose = () => { addMessageToTranscript('system', '서버 연결이 종료되었습니다.'); setInputs(false); };
