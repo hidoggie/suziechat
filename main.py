@@ -343,7 +343,7 @@ async def recognize_image(payload: dict = Body(...)):
         print(f"✅ 가장 유사한 페이지 찾음: 페이지 {PDF_CONTENT[best_match_index]['page']} (유사도: {best_match_score:.2f})")
         
         # 특정 점수 이하이면 일치하는 결과가 없는 것으로 간주
-        if best_match_score < 0.7:
+        if best_match_score < 0.55:
              return {"status": "no_match", "description": "죄송합니다, 이 이미지와 관련된 정보를 찾을 수 없습니다."}
 
         context_text = PDF_CONTENT[best_match_index]['text']
