@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 비전 도슨트 (0804 오전11:16)</title>
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
+        #ar-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+        #video { width: 100%; height: 100%; object-fit: cover; }
+        .ar-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; box-sizing: border-box; pointer-events: none; }
+        .ar-button { padding: 10px 20px; font-size: 1.2em; border-radius: 5px; border: none; background-color: rgba(0,0,0,0.6); color: white; cursor: pointer; pointer-events: all; }
+        #ar-description-box { background-color: rgba(0,0,0,0.8); color: white; padding: 15px; border-radius: 10px; max-height: 40%; overflow-y: auto; pointer-events: all; margin: 0 auto 20px auto; max-width: 90%; }
+        #capture-button-container { width: 100%; text-align: center; pointer-events: all; }
+        #captureBtn { width: 70px; height: 70px; border-radius: 50%; border: 4px solid white; background-color: rgba(255,255,255,0.3); }
+        .hidden { display: none; }
+        #progress-bar { width: 0%; height: 5px; background-color: #007bff; transition: width 0.5s; }
+    </style>
+</head>
+<body>
+    <div id="ar-container">
+        <video id="video" playsinline autoplay></video>
+        <canvas id="canvas" class="hidden"></canvas>
+        <div class="ar-overlay">
+            <div style="display: flex; justify-content: space-between;">
+                <button id="back-to-chat-btn" class="ar-button">↩️ 챗봇으로</button>
+            </div>
+            <div id="ar-description-box" class="hidden">
+                <button id="ar-tts-btn" class="ar-button hidden" style="margin-top: 10px; width: 100%;">🔊 음성 안내</button>
+                <p id="ar-text"></p>
+                <div id="progress-bar-container" style="background-color: #555; border-radius: 5px;"><div id="progress-bar"></div></div> 
+            </div>
+            <div id="capture-button-container">
+                <button id="captureBtn" title="이미지 찾기"></button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const captureBtn = document.getElementById('captureBtn');
+        const backToChatBtn = document.getElementById('back-to-chat-btn');
+        const descriptionBox = document.getElementById('ar-description-box');
+        const arText = document.getElementById('ar-text');
+        const arTtsBtn = document.getElementById('ar-tts-btn');
+        const progressBar = document.getElementById('progress-bar');
+        const progressBarContainer = document.getElementById('progress-bar-container');
+
+        
+        let currentAudio = null;  // ✨ 현재 재생 중인 오디오 객체를 저장할 변수
+
+        // 1. 카메라 시작
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                video.srcObject = stream;
+            } catch (err) {
+                alert("카메라에 접근할 수 없습니다. 권한을 확인해주세요.");
+                window.history.back(); // 이전 페이지(챗봇)로 돌아가기
+            }
+        }
+
+        // 2. 사진 촬영 및 서버 전송
+        captureBtn.onclick = async () => {
+            // UI 초기화 및 로딩 상태 표시
+            descriptionBox.classList.remove('hidden');
+            arTtsBtn.classList.add('hidden');
+            arText.textContent = "이미지를 분석 중입니다...";
+            progressBarContainer.classList.remove('hidden');
+            progressBar.style.width = '10%';
+            captureBtn.disabled = true;
+
+            // 비디오 프레임을 캔버스에 그리기
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // 캔버스 이미지를 Base64 데이터로 변환
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+            
+            // 서버로 이미지 데이터 전송
+            try {
+                progressBar.style.width = '30%';
+                const response = await fetch('/api/recognize-image', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imageData })
+                });
+
+            if (!response.ok) throw new Error('서버 응답 오류');
+            const data = await response.json();
+        
+            // ✨✨✨ 핵심 수정 부분 ✨✨✨
+            // 1. 서버로부터 받은 원본 설명을 변수에 저장합니다.
+            const rawDescription = data.description;
+            // 2. 정규표현식을 사용하여 [IMAGE:...] 태그를 찾아 제거하고, 앞뒤 공백도 정리합니다.
+            const cleanedDescription = rawDescription.replace(/\[IMAGE:.*?\]/g, "").trim();
+               
+                
+              progressBar.style.width = '70%';
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || '서버 응답 오류');
+                }
+
+       //         const data = await response.json();
+                
+                // 결과 표시
+                arText.textContent = cleanedDescription; 
+                if (data.status === 'success') {
+                    arTtsBtn.classList.remove('hidden');
+                }
+            } catch (err) {
+                arText.textContent = `오류가 발생했습니다: ${err.message}`;
+            } finally {
+                progressBar.style.width = '100%';
+                setTimeout(() => { progressBarContainer.classList.add('hidden'); }, 1000);
+                captureBtn.disabled = false;
+            }
+        };
+
+        // 3. 음성 안내 듣기 (재생/중지 토글)
+ arTtsBtn.onclick = async () => {
+           if (currentAudio && !currentAudio.paused) {
+                currentAudio.pause();
+                arTtsBtn.textContent = "▶️ 이어 듣기";
+                return;
+            }
+            if (currentAudio && currentAudio.paused) {
+                currentAudio.play();
+                arTtsBtn.textContent = "⏸️ 듣기 중지";
+                return;
+            }
+            
+            arTtsBtn.disabled = true;
+            arTtsBtn.textContent = "🔊 생성 중...";
+            
+            try {
+                const text = arText.textContent;
+                const response = await fetch('/api/tts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ "text_to_speak": text })
+                });
+                if (!response.ok) throw new Error('서버 응답 오류');
+                
+                const data = await response.json();
+                if (data.audio) {
+                    currentAudio = new Audio("data:audio/mp3;base64," + data.audio);
+                    currentAudio.play();
+                    arTtsBtn.textContent = "⏸️ 듣기 중지";
+                    currentAudio.onended = () => {
+                        arTtsBtn.textContent = "🔊 음성 안내";
+                        currentAudio = null;
+                    };
+                } else {
+                    throw new Error("오디오 데이터를 받지 못했습니다.");
+                }
+            } catch (e) {
+                alert(`음성 생성 실패: ${e.message}`);
+                arTtsBtn.textContent = "🔊 음성 안내";
+            } finally {
+                arTtsBtn.disabled = false;
+            }
+        };
+
+         // 4. 챗봇으로 돌아가기
+        backToChatBtn.onclick = () => {
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            window.close();
+        };
+        
+        startCamera();
+    });
+    </script>
+</body>
+</html>
