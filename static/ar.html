@@ -32,6 +32,8 @@
             pointer-events: all;
         }
         #ar-description-box { 
+            position: fixed;
+            top: 40%;
             background-color: rgba(0,0,0,0.8); 
             color: white; padding: 15px; border-radius: 10px; 
             max-height: 40%; overflow-y: auto; pointer-events: all; 
@@ -42,7 +44,7 @@
             justify-content:center;
             align-items: center;            
         }
-        #capture-button-container { width: 100%; text-align: center; pointer-events: all; }
+        #capture-button-container { position: fixed; top: 92%; width: 100%; text-align: center; pointer-events: all; }
         #captureBtn { 
             background-image: url('static/image/capture_70.png');
             background-repeat: no-repeat;
@@ -233,3 +235,4 @@
 </body>
 
 </html>
+
