@@ -311,7 +311,7 @@ async def websocket_endpoint(websocket: WebSocket):
             
                 prompt = f"""
                 당신은 전문 박물관 도슨트입니다.
-                사용자가 방금 특정 작품에 대한 설명을 요청했고, 당신은 이제 그 작품의 이미지를 사용자에게 보여주면서 해설을 시작하려고 합니다.
+                사용자가 방금 특정 전시물관 관련된 내용을 요청했고, 당신은 이제 그 전시물의 이미지를 사용자에게 보여주면서 해설을 시작하려고 합니다.
 
                 아래 '원본 텍스트'는 당신이 설명해야 할 작품의 정보입니다. 이 텍스트의 핵심 내용만을 바탕으로 자연스러운 해설을 생성해주세요.
 
@@ -387,3 +387,4 @@ async def recognize_image(payload: dict = Body(...)):
         print(f"💥 이미지 인식/요약 오류: {e}")
 
         raise HTTPException(status_code=500, detail=str(e))
+
