@@ -317,7 +317,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 [매우 중요한 규칙]
                 1. "제공된 정보에는...", "그림 3은..." 과 같이 당신의 상황을 설명하거나 이미지 번호를 언급하지 마세요.
-                2. "안녕하세요" 와 같은 인사말 없이, 마치 그림을 가리키며 말하듯이 "이것은..." 또는 "이 작품은..." 과 같이 바로 설명으로 시작해야 합니다.
+                2. "안녕하세요" 와 같은 인사말 없이, 바로 설명으로 시작해야 합니다.
                 3. '원본 텍스트'에 없는 내용은 절대 지어내서는 안 됩니다.
                 
                 --- 컨텍스트 ---
@@ -385,4 +385,5 @@ async def recognize_image(payload: dict = Body(...)):
     
     except Exception as e:
         print(f"💥 이미지 인식/요약 오류: {e}")
+
         raise HTTPException(status_code=500, detail=str(e))
