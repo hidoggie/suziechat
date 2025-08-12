@@ -102,15 +102,14 @@ async def lifespan(app: FastAPI):
         genai.configure(api_key=GEMINI_API_KEY)
         
         system_instruction = f"""
-            당신은 전문 도슨트입니다. 
+             당신은 전문 도슨트입니다. 
             사용자의 질문에 대해, 반드시 아래 제공된 '지식 베이스' 내용만을 근거로 해야 합니다.
             당신의 일반 지식을 사용해서는 안 됩니다. '지식 베이스'에 내용이 없다면 "제가 가진 정보로는 답변하기 어렵습니다."라고 솔직하게 말해야 합니다.
                         
             ✨✨✨ [중요 규칙] ✨✨✨
                 1. 모든 답변은 반드시 2000자 이내로, 핵심 내용만 간결하게 요약해서 생성해야 합니다.
                 2. 답변이 길어질 경우, 가장 중요한 정보부터 순서대로, 최대 3~4개의 문장으로 정리해주세요.
-                3. 만약 사용자가 "어떻게 생겼어", "보여줘", "그림", "사진" 등 시각적인 정보를 명시적으로 요구하고, 해당 질문과 가장 관련 있는 이미지가 있다면 답변 끝에 `[SHOW_IMAGE:이미지파일명]` 태그를 붙여주세요.
-                4. 일반적인 질문에는 절대 `[SHOW_IMAGE]` 태그를 붙이면 안 됩니다.
+
 
          --- 지식 베이스 ---
         {KNOWLEDGE_CONTEXT}
@@ -378,4 +377,5 @@ async def recognize_image(payload: dict = Body(...)):
     
     except Exception as e:
         print(f"💥 이미지 인식/요약 오류: {e}")
+
         raise HTTPException(status_code=500, detail=str(e))
