@@ -1,4 +1,4 @@
-# main.py (0812 오후 12시 08분 최종 완성 및 통합 버전)
+# main.py (11월 21일 데모셋팅하면서 오류 수정작업)
 
 import asyncio
 import os
@@ -250,8 +250,10 @@ async def ar_query(image_name: str = Body(..., embed=True)):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    print("✅ WebSocket 연결 성공") # 로그 추가
     
     if INITIALIZATION_ERROR:
+        print(f"❌ [DEBUG] 초기화 에러 발생: {INITIALIZATION_ERROR}") # 로그 추가
         await websocket.send_json({"type": "error", "data": f"서버 초기화 실패: {INITIALIZATION_ERROR}"})
         await websocket.close(); return
             
@@ -259,23 +261,30 @@ async def websocket_endpoint(websocket: WebSocket):
     print(f"✅ 클라이언트 연결됨: {client_id}")
     try:
         while True:
+            print(f"⏳ [DEBUG] ({client_id}) 메시지 수신 대기 중...") # 로그 추가
             raw_data = await websocket.receive_json()
+            print(f"📩 [DEBUG] ({client_id}) 데이터 수신됨: {raw_data.get('type')}") # 로그 추가
             message_type = raw_data.get("type"); 
             user_input = raw_data.get("data")
             user_text = ""
 
             if message_type == "audio":
+                print(f"🎤 [DEBUG] ({client_id}) 오디오 데이터 처리 시작") # 로그 추가
                 import base64
                 audio_bytes = base64.b64decode(user_input)
                 stt_request = speech.RecognizeRequest(config=speech.RecognitionConfig(encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS, sample_rate_hertz=SAMPLE_RATE, language_code="ko-KR"), audio=speech.RecognitionAudio(content=audio_bytes))
                 stt_response = await asyncio.to_thread(STT_CLIENT.recognize, request=stt_request)
                 user_text = stt_response.results[0].alternatives[0].transcript if stt_response.results else ""
-                if user_text: await websocket.send_json({"type": "user_text", "data": user_text})
+                if user_text:
+                    print(f"🗣️ [DEBUG] ({client_id}) STT 변환 결과: {user_text}") # 로그 추가 
+                    await websocket.send_json({"type": "user_text", "data": user_text})
             
             elif message_type == "text":
                 user_text = user_input
+                print(f"⌨️ [DEBUG] ({client_id}) 텍스트 입력 수신: {user_text}") # 로그 추가
 
             if user_text:
+                print(f"👤 [DEBUG] ({client_id}) 최종 사용자 입력: {user_text}")
                 print(f"👤 사용자 ({client_id}): {user_text}")
 
                 if "이제 그만" in user_text.strip():
@@ -287,6 +296,8 @@ async def websocket_endpoint(websocket: WebSocket):
                  # --- ✨ 2. 백엔드가 직접 이미지 표시 의도 파악 (핵심 수정) ---
                 image_keywords = ["보여줘", "사진", "그림", "이미지", "생김새", "모습"]
                 show_image_intent = any(keyword in user_text for keyword in image_keywords)
+                print(f"🖼️ [DEBUG] ({client_id}) 이미지 요청 의도: {show_image_intent}") # 로그 추가
+                print(f"🔍 [DEBUG] ({client_id}) PDF 검색 시작...") # 로그 추가
 
                 keywords = re.findall(r'[\w가-힣]{2,}', user_text)
                 best_match = {"score": 0, "page_data": None}
@@ -295,17 +306,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     if score > best_match["score"]:
                         best_match["score"] = score
                         best_match["page_data"] = page
+
+                print(f"🔍 [DEBUG] ({client_id}) PDF 검색 완료. 최고 점수: {best_match['score']}") # 로그 추가
                 
-                context_text = "\n\n".join([p['text'] for p in PDF_CONTENT]) # 기본은 전체 컨텍스트
- 
+                context_text = "\n\n".join([p['text'] for p in PDF_CONTENT]) # 기본은 전체 컨텍스트 
                 context_images = []
 
                 if best_match["page_data"]:
                     context_text = best_match["page_data"]["text"]
                     context_images = best_match["page_data"]["images"]
-                    print(f"✅ 컨텍스트 찾음: 페이지 {best_match['page_data']['page']} (점수: {best_match['score']})")
- 
-
+                    print(f"✅ [DEBUG] ({client_id}) 컨텍스트 찾음: 페이지 {best_match['page_data']['page']}")
+                else:                    
+                    print(f"⚠️ [DEBUG] ({client_id}) 특정 페이지 매칭 실패. 전체 컨텍스트 사용.")
                 # --- 3. AI에게 이미지 표시 여부를 스스로 결정하도록 지시 ---
                 # 컨텍스트 이미지 목록은 이제 필요 없으므로 프롬프트에서 제외합니다.  사용자가 방금 특정 작품에 대한 설명을 요청했고, 당신은 이제 그 작품의 이미지를 사용자에게 보여주면서 해설을 시작하려고 합니다.
             
@@ -328,9 +340,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                                
                 """
-                
+                print(f"🤖 [DEBUG] ({client_id}) Gemini에게 요청 전송 시작...") # 로그 추가               
                 gemini_response = await MODEL.generate_content_async(prompt)
                 ai_text = gemini_response.text.strip()
+                print(f"🤖 [DEBUG] ({client_id}) Gemini 응답 수신 완료: {ai_text[:30]}...") # 로그 추가
+
                 await websocket.send_json({"type": "ai_text", "data": ai_text})
 
                  # --- 5. 의도(Intent)에 따라 이미지 표시 ---
@@ -341,10 +355,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     print(f"🖼️ 클라이언트에게 이미지 표시 요청: {image_url}")
                     await websocket.send_json({"type": "ai_image", "data": {"url": image_url}})
 
+                print(f"🔊 [DEBUG] ({client_id}) TTS 변환 시작...") # 로그 추가
               
                 tts_request = texttospeech.SynthesizeSpeechRequest(input=texttospeech.SynthesisInput(text=ai_text), voice=texttospeech.VoiceSelectionParams(language_code="ko-KR", name="ko-KR-Wavenet-A"), audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3))
                 tts_response = await asyncio.to_thread(TTS_CLIENT.synthesize_speech, request=tts_request)
-                if tts_response.audio_content: await websocket.send_bytes(tts_response.audio_content)
+                if tts_response.audio_content: 
+                    print(f"🔊 [DEBUG] ({client_id}) TTS 오디오 전송") # 로그 추가                  
+                    await websocket.send_bytes(tts_response.audio_content)
+                else:
+                    print(f"❌ [DEBUG] ({client_id}) TTS 오디오 생성 실패")
 
     except WebSocketDisconnect: print(f"🔌 클라이언트 연결 끊어짐: {client_id}")
     except Exception as e: print(f"💥 처리 중 오류 ({client_id}): {e}")
