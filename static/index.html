@@ -258,7 +258,10 @@
             try {
                 if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 if (audioContext.state === 'suspended') await audioContext.resume();
+                console.log("🎤 마이크 권한 요청 중...");                
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                console.log("✅ 마이크 권한 획득 성공");  
+                           
                 mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
                 audioChunks = [];
                 mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
@@ -273,6 +276,12 @@
                 };
                 mediaRecorder.start();
                 isRecording = true;
+
+                recordBtn.textContent = "⏹️"; // 아이콘 변경 (정지 버튼)
+                recordBtn.style.backgroundColor = "#ff4444"; // 빨간색으로 강조
+                textInput.placeholder = "듣고 있어요... (버튼을 눌러 전송)";
+
+
             //    recordBtn.textContent = "🎙️";
                 recordBtn.classList.add('blink-soft');
                 recordBtn.classList.add('recording');
@@ -283,6 +292,10 @@
         function stopRecording() { 
             if (mediaRecorder) mediaRecorder.stop(); 
             isRecording = false; setInputs(false); 
+
+            recordBtn.textContent = "🎤"; // 아이콘 변경 (정지 버튼)
+            recordBtn.style.backgroundColor = ""; // 빨간색으로 강조
+            textInput.placeholder = "메시지를 입력하세요...";
         }
 
         
