@@ -53,9 +53,11 @@ async def lifespan(app: FastAPI):
         if not pdf_path.exists(): raise FileNotFoundError(f"{pdf_path} 파일을 찾을 수 없습니다.")
         
         doc = fitz.open(pdf_path)
+        print(f"📄 [DEBUG] PDF 열기 성공. 총 페이지 수: {len(doc)}")
         content_list = []
 
         for page_num, page in enumerate(doc):
+            print(f"Processing Page {page_num + 1}/{len(doc)}...") # 진행 상황 출력
             page = doc.load_page(page_num) # 페이지를 번호로 명시하여 로드
             
             page_text = page.get_text("text")
@@ -77,8 +79,10 @@ async def lifespan(app: FastAPI):
                     print(f"경고: 이미지 처리 실패 (페이지 {page_num}): {img_e}")
 
             content_list.append(page_data)
+            await asyncio.sleep(0.01)
 
         PDF_CONTENT = content_list
+        print("✅ [DEBUG] PDF 처리 완료")
         KNOWLEDGE_CONTEXT = "\n\n".join([page['text'] for page in content_list]) # 전체 텍스트 컨텍스트 생성
 
         print(f"✅ PDF 처리 완료: {len(doc)} 페이지, {sum(len(p['images']) for p in PDF_CONTENT)}개 이미지 추출")
@@ -116,7 +120,7 @@ async def lifespan(app: FastAPI):
         """
         
         generation_config = genai.GenerationConfig(max_output_tokens=MAX_OUTPUT_TOKENS)
-        MODEL = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_instruction, generation_config=generation_config)
+        MODEL = genai.GenerativeModel('gemini-1.5-flash-latest', system_instruction=system_instruction, generation_config=generation_config)
         
         print("🎉 모든 리소스 초기화 완료. 챗봇이 준비되었습니다.")
 
