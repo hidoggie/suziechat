@@ -46,11 +46,15 @@ async def lifespan(app: FastAPI):
 
     try:
         if IMAGES_DIR.exists(): shutil.rmtree(IMAGES_DIR)
-        # PDF 처리 로직
+
+        if IMAGES_DIR.exists():
+            shutil.rmtree(IMAGES_DIR)
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         
         pdf_path = Path(__file__).resolve().parent / KNOWLEDGE_PDF_PATH
-        if not pdf_path.exists(): raise FileNotFoundError(f"{pdf_path} 파일을 찾을 수 없습니다.")
+        if not pdf_path.exists(): 
+            print(f"경고: {pdf_path} 파일을 찾을 수 없습니다.")
+        #    raise FileNotFoundError(f"{pdf_path} 파일을 찾을 수 없습니다.")
         
         doc = fitz.open(pdf_path)
         print(f"📄 [DEBUG] PDF 열기 성공. 총 페이지 수: {len(doc)}")
@@ -61,9 +65,11 @@ async def lifespan(app: FastAPI):
             page = doc.load_page(page_num) # 페이지를 번호로 명시하여 로드
             
             page_text = page.get_text("text")
+            image_files = []
+
             page_images = page.get_images(full=True)
 
-            page_data = {"page": page_num, "text": page_text, "images": []}
+    #        page_data = {"page": page_num, "text": page_text, "images": []}
            
             
             for img_index, img in enumerate(page_images):
@@ -71,14 +77,20 @@ async def lifespan(app: FastAPI):
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
                 try:
-                    image_obj = Image.open(io.BytesIO(image_bytes))
+    #                image_obj = Image.open(io.BytesIO(image_bytes))
                     image_filename = f"page_{page_num}_img_{img_index}.png"
-                    image_obj.save(IMAGES_DIR / image_filename, "PNG")
-                    page_data["images"].append(image_filename)
+
+                    with open(IMAGES_DIR / image_filename, "wb") as f:
+                        f.write(image_bytes)
+                    image_files.append(image_filename)    
+
+     #               image_obj.save(IMAGES_DIR / image_filename, "PNG")
+     #               page_data["images"].append(image_filename)
                 except Exception as img_e:
                     print(f"경고: 이미지 처리 실패 (페이지 {page_num}): {img_e}")
 
-            content_list.append(page_data)
+            content_list.append({"page": page_num + 1, "text": page_text, "images": image_files})
+    #        ontent_list.append(page_data)
             await asyncio.sleep(0.01)
 
         PDF_CONTENT = content_list
