@@ -30,7 +30,7 @@ MAX_OUTPUT_TOKENS = 1500
 STT_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-412b0459f610.json"
 TTS_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-e445e48514e2.json"
 SAMPLE_RATE = 48000
-EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_MODEL = "models/gemini-embedding-001"
 
 # --- 2. 전역 변수 및 앱 초기화 ---
 app = FastAPI()
@@ -45,12 +45,6 @@ async def lifespan(app: FastAPI):
     print("✨ 앱 리소스 초기화를 시작합니다...")
 
     try:
-        # ✅ API 키 먼저 설정 (모든 genai 호출 전에 필수)
-        if not GEMINI_API_KEY: raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
-        genai.configure(api_key=GEMINI_API_KEY)
-
-        if IMAGES_DIR.exists(): shutil.rmtree(IMAGES_DIR)
-
         if IMAGES_DIR.exists():
             shutil.rmtree(IMAGES_DIR)
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -103,10 +97,18 @@ async def lifespan(app: FastAPI):
 
         print(f"✅ PDF 처리 완료: {len(doc)} 페이지, {sum(len(p['images']) for p in PDF_CONTENT)}개 이미지 추출")
 
+       # ✨ Gemini API 설정 먼저 수행
+        if not GEMINI_API_KEY: 
+            raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
+        genai.configure(api_key=GEMINI_API_KEY)
+
         # PDF 텍스트에 대한 임베딩 벡터 생성
         texts_to_embed = [page['text'] for page in PDF_CONTENT if page['text'].strip()]
         if texts_to_embed:
             embedding_response = genai.embed_content(model=EMBEDDING_MODEL, content=texts_to_embed, task_type="RETRIEVAL_DOCUMENT")
+
+            embeddings = embedding_response.get('embeddings') or embedding_response.get('embedding')
+
             text_index = 0
             for i, page_data in enumerate(PDF_CONTENT):
                 if page_data['text'].strip():
@@ -118,6 +120,8 @@ async def lifespan(app: FastAPI):
         # API 클라이언트 초기화
         STT_CLIENT = speech.SpeechClient.from_service_account_file(STT_CREDENTIALS_PATH)
         TTS_CLIENT = texttospeech.TextToSpeechClient.from_service_account_file(TTS_CREDENTIALS_PATH)
+   #      if not GEMINI_API_KEY: raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
+   #      genai.configure(api_key=GEMINI_API_KEY)
         
         system_instruction = f"""
             당신은 전문 도슨트입니다. 
@@ -134,7 +138,8 @@ async def lifespan(app: FastAPI):
         """
         
         generation_config = genai.GenerationConfig(max_output_tokens=MAX_OUTPUT_TOKENS)
-        MODEL = genai.GenerativeModel('gemini-2.5-flash', system_instruction=system_instruction, generation_config=generation_config)
+# ✨ 최신 안정화 모델인 gemini-1.5-flash를 사용합니다.
+        MODEL = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_instruction, generation_config=generation_config)
         
         print("🎉 모든 리소스 초기화 완료. 챗봇이 준비되었습니다.")
 
@@ -153,7 +158,9 @@ def find_best_page_by_vector(query_text: str):
     """주어진 텍스트와 가장 유사한 PDF 페이지를 시맨틱 검색으로 찾습니다."""
     if not query_text or not any('embedding' in p for p in PDF_CONTENT): return None
     
-    query_embedding = genai.embed_content(model=EMBEDDING_MODEL, content=query_text, task_type="RETRIEVAL_QUERY")['embedding']
+# ✨ 쿼리 임베딩
+    res = genai.embed_content(model=EMBEDDING_MODEL, content=query_text, task_type="retrieval_query")
+    query_embedding = res['embedding']
     
     pdf_embeddings = np.array([page['embedding'] for page in PDF_CONTENT if 'embedding' in page])
     query_vector = np.array(query_embedding)
