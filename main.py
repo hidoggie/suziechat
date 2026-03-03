@@ -41,7 +41,7 @@ INITIALIZATION_ERROR = None
 # --- 3. Lifespan을 이용한 안정적인 앱 초기화 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global MODEL, STT_CLIENT, TTS_CLIENT, PDF_CONTENT, INITIALIZATION_ERROR, EMBEDDING_MODEL, KNOWLEDGE_CONTEXT
+    global MODEL, STT_CLIENT, TTS_CLIENT, PDF_CONTENT, INITIALIZATION_ERROR, KNOWLEDGE_CONTEXT
     print("✨ 앱 리소스 초기화를 시작합니다...")
 
     try:
@@ -114,9 +114,6 @@ async def lifespan(app: FastAPI):
 
       #      embeddings = embedding_response.get('embeddings') or embedding_response.get('embedding')
            embeddings = embedding_response['embeddings']
-
-           except Exception as e:
-              print(f"❌ 임베딩 생성 중 메모리 부족 또는 오류: {e}")
 
             text_index = 0
             for i, page_data in enumerate(PDF_CONTENT):
