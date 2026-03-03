@@ -30,7 +30,7 @@ MAX_OUTPUT_TOKENS = 1500
 STT_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-412b0459f610.json"
 TTS_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-e445e48514e2.json"
 SAMPLE_RATE = 48000
-EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_MODEL = "gemini-embedding-001"
 
 # --- 2. 전역 변수 및 앱 초기화 ---
 app = FastAPI()
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     print("✨ 앱 리소스 초기화를 시작합니다...")
 
     try:
-        # API 키 먼저 설정 (임베딩 등 모든 genai 호출 전에 필수)
+        # ✅ API 키 먼저 설정 (모든 genai 호출 전에 필수)
         if not GEMINI_API_KEY: raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
         genai.configure(api_key=GEMINI_API_KEY)
 
