@@ -31,6 +31,7 @@ STT_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-412b0459f610.json"
 TTS_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-e445e48514e2.json"
 SAMPLE_RATE = 48000
 EMBEDDING_MODEL = "models/gemini-embedding-001"
+CHAT_MODEL_NAME = "gemini-2.0-flash"
 
 # --- 2. 전역 변수 및 앱 초기화 ---
 app = FastAPI()
@@ -146,8 +147,7 @@ async def lifespan(app: FastAPI):
         """
         
         generation_config = genai.GenerationConfig(max_output_tokens=MAX_OUTPUT_TOKENS)
-# ✨ 최신 안정화 모델인 gemini-1.5-flash를 사용합니다.
-        MODEL = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_instruction, generation_config=generation_config)
+        MODEL = genai.GenerativeModel(CHAT_MODEL_NAME, system_instruction=system_instruction, generation_config=generation_config)
         
         print("🎉 모든 리소스 초기화 완료. 챗봇이 준비되었습니다.")
 
