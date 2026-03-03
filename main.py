@@ -105,21 +105,18 @@ async def lifespan(app: FastAPI):
         # PDF 텍스트에 대한 임베딩 벡터 생성
         texts_to_embed = [page['text'] for page in PDF_CONTENT if page['text'].strip()]
         if texts_to_embed:
- #           embedding_response = genai.embed_content(model=EMBEDDING_MODEL, content=texts_to_embed, task_type="RETRIEVAL_DOCUMENT")
-           embedding_response = genai.embed_content(
-              model=EMBEDDING_MODEL,
-              content=texts_to_embed,
-              task_type="retrieval_document"
-           )
-
-      #      embeddings = embedding_response.get('embeddings') or embedding_response.get('embedding')
-           embeddings = embedding_response['embeddings']
-
-            text_index = 0
-            for i, page_data in enumerate(PDF_CONTENT):
+            emb_res = genai.embed_content(
+                model=EMBEDDING_MODEL,
+                content=texts_to_embed,
+                task_type="retrieval_document"
+            )
+            embeddings = emb_res['embeddings'] # 리스트 입력 시 'embeddings' 사용
+            
+            idx = 0
+            for page_data in PDF_CONTENT:
                 if page_data['text'].strip():
-                    page_data['embedding'] = embedding_response['embedding'][text_index]
-                    text_index += 1
+                    page_data['embedding'] = embeddings[idx]
+                    idx += 1
             print(f"✅ {len(texts_to_embed)}개 텍스트에 대한 임베딩 생성 완료.")
 
 
