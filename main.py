@@ -45,6 +45,10 @@ async def lifespan(app: FastAPI):
     print("✨ 앱 리소스 초기화를 시작합니다...")
 
     try:
+        # API 키 먼저 설정 (임베딩 등 모든 genai 호출 전에 필수)
+        if not GEMINI_API_KEY: raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
+        genai.configure(api_key=GEMINI_API_KEY)
+
         if IMAGES_DIR.exists(): shutil.rmtree(IMAGES_DIR)
 
         if IMAGES_DIR.exists():
@@ -114,8 +118,6 @@ async def lifespan(app: FastAPI):
         # API 클라이언트 초기화
         STT_CLIENT = speech.SpeechClient.from_service_account_file(STT_CREDENTIALS_PATH)
         TTS_CLIENT = texttospeech.TextToSpeechClient.from_service_account_file(TTS_CREDENTIALS_PATH)
-        if not GEMINI_API_KEY: raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
-        genai.configure(api_key=GEMINI_API_KEY)
         
         system_instruction = f"""
             당신은 전문 도슨트입니다. 
@@ -456,5 +458,4 @@ async def recognize_image(payload: dict = Body(...)):
 
     except Exception as e:
         print(f"💥 이미지 인식/요약 오류: {e}")
-
         raise HTTPException(status_code=500, detail=str(e))
