@@ -9,3 +9,4 @@ google-cloud-texttospeech
 numpy
 PyMuPDF
 Pillow
+langdetect>=1.0.9

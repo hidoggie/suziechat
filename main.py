@@ -39,6 +39,24 @@ PDF_CONTENT = []
 MODEL, STT_CLIENT, TTS_CLIENT = None, None, None
 INITIALIZATION_ERROR = None
 
+from langdetect import detect
+
+def get_voice_params(text):
+    """텍스트의 언어를 감지하여 적절한 구글 TTS 설정을 반환합니다."""
+    try:
+        lang = detect(text)
+        if lang == 'en':
+            return "en-US", "en-US-Wavenet-D"
+        elif lang == 'ja':
+            return "ja-JP", "ja-JP-Wavenet-B"
+        elif lang == 'ko':
+            return "ko-KR", "ko-KR-Wavenet-A"
+        # 추가 언어 설정 가능
+        return "ko-KR", "ko-KR-Wavenet-A" # 기본값
+    except:
+        return "ko-KR", "ko-KR-Wavenet-A"
+
+
 # --- 3. Lifespan을 이용한 안정적인 앱 초기화 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -138,8 +156,10 @@ async def lifespan(app: FastAPI):
             당신의 일반 지식을 사용해서는 안 됩니다. '지식 베이스'에 내용이 없다면 "제가 가진 정보로는 답변하기 어렵습니다."라고 솔직하게 말해야 합니다.
             
             ✨✨✨ [중요 규칙] ✨✨✨
-                1. 모든 답변은 반드시 2000자 이내로, 핵심 내용만 간결하게 요약해서 생성해야 합니다.
-                2. 답변이 길어질 경우, 가장 중요한 정보부터 순서대로, 최대 3~4개의 문장으로 정리해주세요.
+                1.  사용자가 질문한 언어를 감지하여, 반드시 '그 언어'로 답변하세요.
+                    (예: 영어 질문 -> 영어 답변, 일본어 질문 -> 일본어 답변)
+                2. 모든 답변은 반드시 2000자 이내로, 핵심 내용만 간결하게 요약해서 생성해야 합니다.
+                3. 답변이 길어질 경우, 가장 중요한 정보부터 순서대로, 최대 3~4개의 문장으로 정리해주세요.
 
          --- 지식 베이스 ---
         {KNOWLEDGE_CONTEXT}
@@ -218,6 +238,9 @@ async def get_pdf_content():
 async def text_to_speech_api(payload: dict = Body(...)):
     # ✨ 1. 음성 안내 버튼 오류 수정을 위한 최종 TTS API 코드
     text_to_speak = payload.get("text_to_speak")
+
+    lang_code, voice_name = get_voice_params(text_to_speak)
+
     if not text_to_speak:
         raise HTTPException(status_code=400, detail="text_to_speak 필드가 필요합니다.")
     if not TTS_CLIENT:
@@ -225,7 +248,10 @@ async def text_to_speech_api(payload: dict = Body(...)):
     try:
         tts_request = texttospeech.SynthesizeSpeechRequest(
             input=texttospeech.SynthesisInput(text=text_to_speak),
-            voice=texttospeech.VoiceSelectionParams(language_code="ko-KR", name="ko-KR-Wavenet-A"),
+            voice=texttospeech.VoiceSelectionParams(
+               language_code = lang_code, 
+               name = voice_name
+            ),
             audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3),
         )
         tts_response = await asyncio.to_thread(TTS_CLIENT.synthesize_speech, request=tts_request)
@@ -269,10 +295,15 @@ async def ar_query(image_name: str = Body(..., embed=True)):
         gemini_response = await MODEL.generate_content_async(prompt)
         ai_text = gemini_response.text.strip()
 
+        lang_code, voice_name = get_voice_params(ai_text) # ✨ 언어 감지
+
         # 생성된 설명으로 TTS 오디오 생성
         tts_request = texttospeech.SynthesizeSpeechRequest(
             input=texttospeech.SynthesisInput(text=ai_text),
-            voice=texttospeech.VoiceSelectionParams(language_code="ko-KR", name="ko-KR-Wavenet-A"),
+            voice=texttospeech.VoiceSelectionParams(
+              language_code=lang_code,
+              name=voice_name
+            ),
             audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3),
         )
         tts_response = await asyncio.to_thread(TTS_CLIENT.synthesize_speech, request=tts_request)
@@ -314,7 +345,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"🎤 [DEBUG] ({client_id}) 오디오 데이터 처리 시작") # 로그 추가
                 import base64
                 audio_bytes = base64.b64decode(user_input)
-                stt_request = speech.RecognizeRequest(config=speech.RecognitionConfig(encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS, sample_rate_hertz=SAMPLE_RATE, language_code="ko-KR"), audio=speech.RecognitionAudio(content=audio_bytes))
+                stt_request = speech.RecognizeRequest(
+                  config=speech.RecognitionConfig(
+                     encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS, 
+                     sample_rate_hertz=SAMPLE_RATE, 
+                     language_code="ko-KR",
+                     alternative_language_codes=["en-US", "ja-JP"]
+                  ), 
+                  audio=speech.RecognitionAudio(content=audio_bytes)
+                )
                 stt_response = await asyncio.to_thread(STT_CLIENT.recognize, request=stt_request)
                 user_text = stt_response.results[0].alternatives[0].transcript if stt_response.results else ""
                 if user_text:
@@ -398,8 +437,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json({"type": "ai_image", "data": {"url": image_url}})
 
                 print(f"🔊 [DEBUG] ({client_id}) TTS 변환 시작...") # 로그 추가
+
+                lang_code, voice_name = get_voice_params(ai_text)
               
-                tts_request = texttospeech.SynthesizeSpeechRequest(input=texttospeech.SynthesisInput(text=ai_text), voice=texttospeech.VoiceSelectionParams(language_code="ko-KR", name="ko-KR-Wavenet-A"), audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3))
+                tts_request = texttospeech.SynthesizeSpeechRequest(
+                   input=texttospeech.SynthesisInput(text=ai_text), 
+                   voice=texttospeech.VoiceSelectionParams(
+                      language_code = lang_code, 
+                      name = voice_name
+                   ), 
+                   audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3))
                 tts_response = await asyncio.to_thread(TTS_CLIENT.synthesize_speech, request=tts_request)
                 if tts_response.audio_content: 
                     print(f"🔊 [DEBUG] ({client_id}) TTS 오디오 전송") # 로그 추가                  
