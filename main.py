@@ -105,9 +105,18 @@ async def lifespan(app: FastAPI):
         # PDF 텍스트에 대한 임베딩 벡터 생성
         texts_to_embed = [page['text'] for page in PDF_CONTENT if page['text'].strip()]
         if texts_to_embed:
-            embedding_response = genai.embed_content(model=EMBEDDING_MODEL, content=texts_to_embed, task_type="RETRIEVAL_DOCUMENT")
+ #           embedding_response = genai.embed_content(model=EMBEDDING_MODEL, content=texts_to_embed, task_type="RETRIEVAL_DOCUMENT")
+           embedding_response = genai.embed_content(
+              model=EMBEDDING_MODEL,
+              content=texts_to_embed,
+              task_type="retrieval_document"
+           )
 
-            embeddings = embedding_response.get('embeddings') or embedding_response.get('embedding')
+      #      embeddings = embedding_response.get('embeddings') or embedding_response.get('embedding')
+           embeddings = embedding_response['embeddings']
+
+           except Exception as e:
+              print(f"❌ 임베딩 생성 중 메모리 부족 또는 오류: {e}")
 
             text_index = 0
             for i, page_data in enumerate(PDF_CONTENT):
