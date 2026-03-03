@@ -30,7 +30,7 @@ MAX_OUTPUT_TOKENS = 1500
 STT_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-412b0459f610.json"
 TTS_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-e445e48514e2.json"
 SAMPLE_RATE = 48000
-EMBEDDING_MODEL = "models/text-embedding-004"
+EMBEDDING_MODEL = "text-embedding-004"
 
 # --- 2. 전역 변수 및 앱 초기화 ---
 app = FastAPI()
@@ -456,4 +456,5 @@ async def recognize_image(payload: dict = Body(...)):
 
     except Exception as e:
         print(f"💥 이미지 인식/요약 오류: {e}")
+
         raise HTTPException(status_code=500, detail=str(e))
