@@ -106,10 +106,12 @@ async def lifespan(app: FastAPI):
         texts_to_embed = [page['text'] for page in PDF_CONTENT if page['text'].strip()]
         if texts_to_embed:
             embedding_response = genai.embed_content(
-                model=EMBEDDING_MODEL,
-                content=texts_to_embed,
-                task_type="retrieval_document"
-            )
+               model=EMBEDDING_MODEL,
+               content=texts_to_embed,
+               task_type="retrieval_document",
+               output_dimensionality=768  # ✨ 데이터를 1/4로 줄여 메모리 확보
+            )            
+           
             embeddings_list = embedding_response.get('embeddings') or embedding_response.get('embedding')
 
             if not embeddings_list:
@@ -165,7 +167,7 @@ def find_best_page_by_vector(query_text: str):
     if not query_text or not any('embedding' in p for p in PDF_CONTENT): return None
     
 # ✨ 쿼리 임베딩
-    res = genai.embed_content(model=EMBEDDING_MODEL, content=query_text, task_type="retrieval_query")
+    res = genai.embed_content(model=EMBEDDING_MODEL, content=query_text, task_type="retrieval_query", output_dimensionality=768)
     query_embedding = res['embedding']
     
     pdf_embeddings = np.array([page['embedding'] for page in PDF_CONTENT if 'embedding' in page])
