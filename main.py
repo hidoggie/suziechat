@@ -31,7 +31,7 @@ STT_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-412b0459f610.json"
 TTS_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-e445e48514e2.json"
 SAMPLE_RATE = 48000
 EMBEDDING_MODEL = "models/gemini-embedding-001"
-CHAT_MODEL_NAME = "gemini-2.0-flash"
+CHAT_MODEL_NAME = "gemini-2.5-flash"
 
 # --- 2. 전역 변수 및 앱 초기화 ---
 app = FastAPI()
@@ -167,19 +167,28 @@ def find_best_page_by_vector(query_text: str):
     if not query_text or not any('embedding' in p for p in PDF_CONTENT): return None
     
 # ✨ 쿼리 임베딩
-    res = genai.embed_content(model=EMBEDDING_MODEL, content=query_text, task_type="retrieval_query", output_dimensionality=768)
-    query_embedding = res['embedding']
-    
-    pdf_embeddings = np.array([page['embedding'] for page in PDF_CONTENT if 'embedding' in page])
-    query_vector = np.array(query_embedding)
-    
-    dot_products = np.dot(pdf_embeddings, query_vector)
-    norms = np.linalg.norm(pdf_embeddings, axis=1) * np.linalg.norm(query_vector)
-    similarity_scores = dot_products / norms
-    
-    best_match_index = np.argmax(similarity_scores)
-    return PDF_CONTENT[best_match_index] if similarity_scores[best_match_index] > 0.6 else None
+    res = genai.embed_content(
+       model=EMBEDDING_MODEL, 
+       content=query_text, 
+       task_type="retrieval_query", 
+       output_dimensionality=768
+    )
 
+    query_vector = np.array(res['embedding'])
+    
+    # 벡터 크기 정규화 및 유사도 계산
+    pdf_vectors = np.array([p['embedding'] for p in PDF_CONTENT if 'embedding' in p])
+    
+    # 코사인 유사도 계산 (분모가 0이 되는 것을 방지)
+    dot_products = np.dot(pdf_vectors, query_vector)
+    norms = np.linalg.norm(pdf_vectors, axis=1) * np.linalg.norm(query_vector)
+    similarity_scores = dot_products / (norms + 1e-9) 
+    
+    best_idx = np.argmax(similarity_scores)
+    max_score = similarity_scores[best_idx]
+    
+    print(f"🔍 [DEBUG] 검색 완료. 최고 점수: {max_score:.4f}")
+    return PDF_CONTENT[best_idx] if max_score > 0.4 else None # 기준점을 현실적으로 조정
 
 # --- 4. FastAPI 엔드포인트 ---
 BASE_DIR = Path(__file__).resolve().parent
