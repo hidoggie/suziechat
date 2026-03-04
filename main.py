@@ -19,6 +19,7 @@ import numpy as np
 
 import google.generativeai as genai
 from google.cloud import speech, texttospeech
+from langdetect import detect
 
 # --- 1. 설정 ---
 KNOWLEDGE_PDF_PATH = "knowledge.pdf"
@@ -173,12 +174,18 @@ async def lifespan(app: FastAPI):
             raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
         genai.configure(api_key=GEMINI_API_KEY)
 
-        # 임베딩 생성
-        texts_to_embed = [p['text'] for p in PDF_CONTENT if p['text'].strip()]
-        if texts_to_embed:
+        # 임베딩 생성 — 배치 처리로 메모리 부담 분산
+        texts_to_embed = [(i, p) for i, p in enumerate(PDF_CONTENT) if p['text'].strip()]
+        BATCH_SIZE = 20
+        print(f"✅ 총 {len(texts_to_embed)}개 페이지 임베딩 생성 시작 (배치 크기: {BATCH_SIZE})")
+
+        for batch_start in range(0, len(texts_to_embed), BATCH_SIZE):
+            batch = texts_to_embed[batch_start:batch_start + BATCH_SIZE]
+            batch_texts = [p['text'] for _, p in batch]
+
             embedding_response = genai.embed_content(
                 model=EMBEDDING_MODEL,
-                content=texts_to_embed,
+                content=batch_texts,
                 task_type="retrieval_document",
                 output_dimensionality=768
             )
@@ -186,12 +193,13 @@ async def lifespan(app: FastAPI):
             if not embeddings_list:
                 raise KeyError(f"임베딩 데이터를 찾을 수 없습니다. 응답 구조: {list(embedding_response.keys())}")
 
-            text_index = 0
-            for page_data in PDF_CONTENT:
-                if page_data['text'].strip():
-                    page_data['embedding'] = embeddings_list[text_index]
-                    text_index += 1
-            print(f"✅ {len(texts_to_embed)}개 임베딩 생성 완료.")
+            for j, (orig_idx, page_data) in enumerate(batch):
+                page_data['embedding'] = embeddings_list[j]
+
+            print(f"  배치 {batch_start // BATCH_SIZE + 1} 완료 ({min(batch_start + BATCH_SIZE, len(texts_to_embed))}/{len(texts_to_embed)})")
+            await asyncio.sleep(0.05)  # API rate limit 여유
+
+        print(f"✅ 전체 임베딩 생성 완료.")
 
         STT_CLIENT = speech.SpeechClient.from_service_account_file(STT_CREDENTIALS_PATH)
         TTS_CLIENT = texttospeech.TextToSpeechClient.from_service_account_file(TTS_CREDENTIALS_PATH)
@@ -570,21 +578,20 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"⚠️ ({client_id}) 매칭 실패. 전체 컨텍스트 사용.")
 
             # Gemini 응답 생성
-            # WebSocket 채팅은 MODEL의 system_instruction(언어 자동감지)을 그대로 활용
+            # system_instruction 의 "질문 언어로 답변" 규칙이 동작하도록
+            # prompt 는 언어 지시 없이 컨텍스트와 질문만 전달
             prompt = f"""
-            당신은 전문 박물관 도슨트입니다.
+[Rules]
+- Do NOT mention image numbers, figure numbers, or meta-information about the source.
+- Do NOT open with a greeting.
+- Do NOT fabricate information not present in the context.
 
-            [중요 규칙]
-            1. "제공된 정보에는...", "그림 3은..." 과 같이 상황 설명이나 이미지 번호를 언급하지 마세요.
-            2. 인사말 없이 바로 설명으로 시작하세요.
-            3. 원본 텍스트에 없는 내용은 지어내지 마세요.
+--- Context ---
+{context_text}
 
-            --- 컨텍스트 ---
-            {context_text}
-
-            --- 질문 ---
-            {user_text}
-            """
+--- Question ---
+{user_text}
+"""
             print(f"🤖 ({client_id}) Gemini 요청 전송...")
             gemini_response = await MODEL.generate_content_async(prompt)
             ai_text = gemini_response.text.strip()
@@ -598,9 +605,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"🖼️ 이미지 전송: {image_url}")
                 await websocket.send_json({"type": "ai_image", "data": {"url": image_url}})
 
-            # TTS — 응답 텍스트 언어 자동감지 (챗봇은 질문 언어를 따라가므로)
+            # TTS — AI 응답 텍스트 언어 자동감지
             try:
-                from langdetect import detect
                 detected_lang = detect(ai_text)
             except Exception:
                 detected_lang = DEFAULT_LANG
