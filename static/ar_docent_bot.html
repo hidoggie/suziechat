@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR 도슨트 - 도슨트봇</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            margin: 0; padding: 0; overflow: hidden;
+        }
+
+        /* ── 카메라 전체 배경 ── */
+        #ar-container {
+            position: fixed; inset: 0;
+            background: #000;
+        }
+        #video {
+            width: 100%; height: 100%;
+            object-fit: cover;
+        }
+        #canvas { display: none; }
+
+        /* ── 스캔 라인 애니메이션 ── */
+        @keyframes scan {
+            0%, 100% { transform: translateY(0); }
+            50%       { transform: translateY(360px); }
+        }
+        .scan-line {
+            animation: scan 2s ease-in-out infinite;
+        }
+
+        /* ── AR 설명창 슬라이드업 ── */
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to   { transform: translateY(0);    opacity: 1; }
+        }
+        .slide-up { animation: slideUp 0.4s cubic-bezier(0.34,1.2,0.64,1) both; }
+
+        /* ── 단락 간격 ── */
+        #ar-text br + br { display: block; content: ''; margin-top: 8px; }
+    </style>
+</head>
+
+<body>
+<div id="ar-container">
+
+    <!-- 카메라 -->
+    <video id="video" playsinline autoplay></video>
+    <canvas id="canvas"></canvas>
+
+    <!-- ══════════════════════════════════════
+         [A] 초기 화면 오버레이
+         - "작품 스캔" 버튼만 표시
+    ══════════════════════════════════════ -->
+    <div id="view-initial" class="absolute inset-0 flex flex-col items-center justify-end pb-10 z-20">
+        <!-- 언어 선택 -->
+        <div class="absolute top-5 left-1/2 -translate-x-1/2 z-30">
+            <button id="langBtn" onclick="toggleLangMenu()"
+                class="bg-white/20 backdrop-blur-md px-4 py-2 rounded-full flex items-center gap-2 hover:bg-white/30 transition-all text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/>
+                    <path d="M2 12h20"/>
+                </svg>
+                <span id="currentLangLabel">한국어</span>
+                <svg id="langArrow" class="w-4 h-4 transition-transform" fill="none" stroke="white" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+            </button>
+            <!-- 드롭다운 -->
+            <div id="langMenu" class="hidden absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl overflow-hidden min-w-[180px] z-50"></div>
+        </div>
+
+        <!-- 안내 문구 -->
+        <p class="text-white/70 text-sm mb-6 text-center px-8">카메라를 작품에 맞춰 버튼을 눌러주세요</p>
+
+        <!-- 작품 스캔 버튼 -->
+        <button id="scanButton" onclick="startScan()"
+            class="w-72 bg-blue-500 hover:bg-blue-600 active:scale-95 text-white py-4 rounded-2xl font-semibold text-base transition-all shadow-lg flex items-center justify-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+                <path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                <rect width="10" height="8" x="7" y="8" rx="1"/>
+            </svg>
+            작품 스캔
+        </button>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         [B] 스캔 중 화면
+         - 스캔 프레임 + 우상단 "Scanning" 뱃지
+    ══════════════════════════════════════ -->
+    <div id="view-scanning" class="hidden absolute inset-0 flex flex-col items-center z-20">
+
+        <!-- 상단바 -->
+        <div class="w-full flex items-center justify-between px-4 pt-5 pb-2">
+            <button onclick="cancelScan()" class="text-white hover:bg-white/20 w-10 h-10 rounded-lg flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+            <!-- Scanning 뱃지 -->
+            <div class="flex items-center gap-2 bg-gray-800/80 backdrop-blur-sm px-3 py-1.5 rounded-full">
+                <span class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                <span class="text-white text-sm font-medium">Scanning</span>
+            </div>
+        </div>
+
+        <!-- 스캔 프레임 -->
+        <div class="flex-1 flex flex-col items-center justify-center px-8 w-full">
+            <div class="w-full max-w-xs">
+                <div class="relative border-4 border-sky-400 rounded-2xl overflow-hidden shadow-2xl">
+                    <div class="relative aspect-[3/4] bg-black/30">
+                        <!-- 스캔 라인 -->
+                        <div class="scan-line absolute inset-x-0 top-0 h-1 bg-sky-400 shadow-lg shadow-sky-400/50"></div>
+                        <!-- 코너 마커 -->
+                        <div class="absolute top-3 left-3 w-8 h-8 border-l-4 border-t-4 border-sky-400"></div>
+                        <div class="absolute top-3 right-3 w-8 h-8 border-r-4 border-t-4 border-sky-400"></div>
+                        <div class="absolute bottom-3 left-3 w-8 h-8 border-l-4 border-b-4 border-sky-400"></div>
+                        <div class="absolute bottom-3 right-3 w-8 h-8 border-r-4 border-b-4 border-sky-400"></div>
+                        <!-- 분석 중 표시 -->
+                        <div class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+                            <div class="flex items-center gap-2">
+                                <div class="bg-sky-400 text-black px-2 py-0.5 rounded text-xs font-bold">AI</div>
+                                <span class="text-white text-sm font-semibold">작품 인식 중...</span>
+                                <div class="ml-auto flex gap-1">
+                                    <div class="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce" style="animation-delay:0s"></div>
+                                    <div class="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce" style="animation-delay:0.2s"></div>
+                                    <div class="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce" style="animation-delay:0.4s"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <p class="text-white/70 text-center text-sm mt-4">카메라를 작품에 맞춰주세요</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         [C] AR 설명 화면 (ar-description)
+    ══════════════════════════════════════ -->
+    <div id="view-description" class="hidden absolute inset-0 flex flex-col justify-end z-20">
+
+        <!-- 반투명 배경 탭 -->
+        <div class="slide-up bg-black/50 backdrop-blur-lg rounded-t-3xl p-5 max-h-[75vh] overflow-y-auto">
+
+            <!-- 헤더: 언어 선택 + X 버튼 -->
+            <div class="flex items-center justify-between mb-4">
+                <div class="relative">
+                    <button onclick="toggleLangMenu()"
+                        class="bg-white/20 px-3 py-1.5 rounded-full flex items-center gap-2 hover:bg-white/30 transition-all text-white text-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/>
+                            <path d="M2 12h20"/>
+                        </svg>
+                        <span id="descLangLabel">한국어</span>
+                        <svg class="w-3 h-3" fill="none" stroke="white" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </button>
+                    <!-- 드롭다운 (설명창 내) -->
+                    <div id="langMenu2" class="hidden absolute top-full mt-2 left-0 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl overflow-hidden min-w-[180px] z-50"></div>
+                </div>
+
+                <!-- 닫기 버튼 → 초기 상태로 -->
+                <button onclick="closeDescription()"
+                    class="text-white/70 hover:text-white hover:bg-white/20 w-9 h-9 rounded-full flex items-center justify-center transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- 재생 컨트롤 -->
+            <div class="mb-5">
+                <!-- 프로그레스 바 -->
+                <div class="w-full bg-white/20 rounded-full h-1.5 mb-1">
+                    <div id="progressBar" class="bg-gradient-to-r from-cyan-400 to-blue-500 h-1.5 rounded-full transition-all duration-300" style="width:0%"></div>
+                </div>
+                <div class="flex justify-between text-xs text-gray-300 mb-4">
+                    <span id="currentTime">0:00</span>
+                    <span id="durationLabel">0:00</span>
+                </div>
+
+                <!-- 컨트롤 버튼 -->
+                <div class="flex items-center justify-center gap-6">
+                    <button onclick="skipBack()" class="text-white/70 hover:text-white transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/>
+                        </svg>
+                    </button>
+                    <button id="playButton" onclick="togglePlay()"
+                        class="w-14 h-14 bg-gradient-to-br from-cyan-400 to-blue-500 rounded-full flex items-center justify-center hover:scale-105 transition-transform shadow-lg">
+                        <svg id="playIcon" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                    </button>
+                    <button onclick="skipForward()" class="text-white/70 hover:text-white transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 해설 텍스트 -->
+            <div class="bg-white/10 rounded-2xl p-4 mb-4 backdrop-blur-sm">
+                <p id="ar-text" class="text-white text-sm leading-relaxed"></p>
+            </div>
+
+            <!-- 하단 버튼 -->
+            <div class="space-y-3">
+                <button onclick="closeDescription(); setTimeout(startScan, 100)"
+                    class="w-full bg-cyan-500 hover:bg-cyan-600 text-white py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+                        <path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                        <rect width="10" height="8" x="7" y="8" rx="1"/>
+                    </svg>
+                    <span>작품스캔하기 / Scan Artwork</span>
+                </button>
+                <button onclick="location.href='voice_chat_bot.html'"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                    </svg>
+                    <span>음성챗봇 질문하기 / Ask Chatbot</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+</div><!-- #ar-container -->
+
+<script>
+/* ══════════════════════════════════════════════
+   언어 설정
+══════════════════════════════════════════════ */
+const LANGUAGES = [
+    { code: 'ko', label: '한국어' },
+    { code: 'en', label: 'English' },
+    { code: 'ja', label: '日本語' },
+    { code: 'zh', label: '中文' },
+    { code: 'fr', label: 'Français' },
+    { code: 'de', label: 'Deutsch' },
+    { code: 'es', label: 'Español' },
+];
+
+let selectedLang = 'ko';
+
+function buildLangMenus() {
+    ['langMenu', 'langMenu2'].forEach(id => {
+        const el = document.getElementById(id);
+        el.innerHTML = LANGUAGES.map(l => `
+            <button onclick="selectLang('${l.code}')"
+                class="w-full px-4 py-3 text-left text-gray-800 hover:bg-sky-50 transition-colors text-sm flex items-center justify-between">
+                <span>${l.label}</span>
+                ${l.code === selectedLang ? '<span class="text-sky-500">✓</span>' : ''}
+            </button>
+        `).join('');
+    });
+}
+
+function toggleLangMenu() {
+    const m1 = document.getElementById('langMenu');
+    const m2 = document.getElementById('langMenu2');
+    // 어느 쪽이든 토글
+    [m1, m2].forEach(m => m.classList.toggle('hidden'));
+}
+
+function selectLang(code) {
+    selectedLang = code;
+    const label = LANGUAGES.find(l => l.code === code)?.label ?? code;
+    document.getElementById('currentLangLabel').textContent = label;
+    document.getElementById('descLangLabel').textContent = label;
+    buildLangMenus();
+    ['langMenu', 'langMenu2'].forEach(id => document.getElementById(id).classList.add('hidden'));
+}
+
+// 외부 클릭 시 메뉴 닫기
+document.addEventListener('click', e => {
+    if (!e.target.closest('#langBtn') && !e.target.closest('#view-description button:first-child')) {
+        document.getElementById('langMenu').classList.add('hidden');
+        document.getElementById('langMenu2').classList.add('hidden');
+    }
+});
+
+/* ══════════════════════════════════════════════
+   화면 전환 유틸
+══════════════════════════════════════════════ */
+function showView(name) {
+    ['view-initial', 'view-scanning', 'view-description'].forEach(id => {
+        document.getElementById(id).classList.toggle('hidden', id !== name);
+    });
+}
+
+/* ══════════════════════════════════════════════
+   텍스트 → HTML 단락 변환 (voice_chat_bot 동일 방식)
+══════════════════════════════════════════════ */
+function renderParagraphs(rawText) {
+    const escaped = rawText
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    return escaped
+        .replace(/\n\n+/g, '<br><br>')
+        .replace(/\n/g, '<br>');
+}
+
+/* ══════════════════════════════════════════════
+   오디오 재생 상태
+══════════════════════════════════════════════ */
+let currentAudio = null;   // HTMLAudioElement
+let audioSrc = null;       // base64 src (재시작용)
+let playInterval = null;
+let audioDuration = 0;
+let audioOffset = 0;       // 일시정지 위치(초)
+
+function formatTime(sec) {
+    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2,'0')}`;
+}
+
+function setPlayIcon(playing) {
+    document.getElementById('playIcon').innerHTML = playing
+        ? '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>'
+        : '<polygon points="5 3 19 12 5 21 5 3"/>';
+}
+
+function clearAudioState() {
+    if (playInterval) { clearInterval(playInterval); playInterval = null; }
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    audioSrc = null; audioDuration = 0; audioOffset = 0;
+    document.getElementById('progressBar').style.width = '0%';
+    document.getElementById('currentTime').textContent = '0:00';
+    document.getElementById('durationLabel').textContent = '0:00';
+    setPlayIcon(false);
+}
+
+function startProgressTrack() {
+    if (playInterval) clearInterval(playInterval);
+    playInterval = setInterval(() => {
+        if (!currentAudio) return;
+        const t = currentAudio.currentTime;
+        const d = currentAudio.duration || audioDuration || 1;
+        document.getElementById('progressBar').style.width = (t/d*100) + '%';
+        document.getElementById('currentTime').textContent = formatTime(t);
+        document.getElementById('durationLabel').textContent = formatTime(d);
+    }, 500);
+}
+
+async function togglePlay() {
+    // 재생 중 → 일시정지
+    if (currentAudio && !currentAudio.paused) {
+        audioOffset = currentAudio.currentTime;
+        currentAudio.pause();
+        clearInterval(playInterval); playInterval = null;
+        setPlayIcon(false);
+        return;
+    }
+    // 일시정지 상태 → 이어 재생
+    if (currentAudio && currentAudio.paused && audioSrc) {
+        currentAudio.currentTime = audioOffset;
+        currentAudio.play();
+        startProgressTrack();
+        setPlayIcon(true);
+        return;
+    }
+    // 최초 재생 → TTS 요청
+    await fetchAndPlayTTS();
+}
+
+async function fetchAndPlayTTS() {
+    const text = document.getElementById('ar-text').innerText.trim();
+    if (!text) return;
+
+    setPlayIcon(false);
+    document.getElementById('playButton').disabled = true;
+
+    try {
+        const response = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text_to_speak: text, lang: selectedLang })
+        });
+        if (!response.ok) throw new Error('TTS 서버 오류');
+        const data = await response.json();
+        if (!data.audio) throw new Error('오디오 없음');
+
+        audioSrc = 'data:audio/mp3;base64,' + data.audio;
+        currentAudio = new Audio(audioSrc);
+        audioOffset = 0;
+
+        currentAudio.onloadedmetadata = () => {
+            audioDuration = currentAudio.duration;
+            document.getElementById('durationLabel').textContent = formatTime(audioDuration);
+        };
+        currentAudio.onended = () => {
+            clearInterval(playInterval); playInterval = null;
+            audioOffset = 0;
+            document.getElementById('progressBar').style.width = '100%';
+            setPlayIcon(false);
+        };
+
+        currentAudio.play();
+        startProgressTrack();
+        setPlayIcon(true);
+    } catch(e) {
+        alert('음성 생성 실패: ' + e.message);
+    } finally {
+        document.getElementById('playButton').disabled = false;
+    }
+}
+
+function skipBack() {
+    if (!currentAudio) return;
+    currentAudio.currentTime = Math.max(0, currentAudio.currentTime - 10);
+    audioOffset = currentAudio.currentTime;
+}
+function skipForward() {
+    if (!currentAudio) return;
+    currentAudio.currentTime = Math.min(currentAudio.duration || 9999, currentAudio.currentTime + 10);
+    audioOffset = currentAudio.currentTime;
+}
+
+/* ══════════════════════════════════════════════
+   화면 전환 함수
+══════════════════════════════════════════════ */
+function startScan() {
+    clearAudioState();
+    showView('view-scanning');
+    captureAndRecognize();
+}
+
+function cancelScan() {
+    showView('view-initial');
+}
+
+function closeDescription() {
+    clearAudioState();
+    showView('view-initial');
+}
+
+/* ══════════════════════════════════════════════
+   카메라 & 이미지 인식
+══════════════════════════════════════════════ */
+async function captureAndRecognize() {
+    const video  = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+
+    // 프레임 캡처
+    canvas.width  = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+    try {
+        const response = await fetch('/api/recognize-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: imageData, lang: selectedLang })
+        });
+        if (!response.ok) throw new Error('서버 응답 오류');
+        const data = await response.json();
+
+        // [IMAGE:...] 태그 제거
+        const rawDescription = (data.description || '').replace(/\[IMAGE:.*?\]/g, '').trim();
+
+        // 설명 텍스트 렌더링 (단락 구분)
+        document.getElementById('ar-text').innerHTML = renderParagraphs(rawDescription);
+
+        // 설명창 표시
+        showView('view-description');
+
+    } catch(err) {
+        alert('인식 오류: ' + err.message);
+        showView('view-initial');
+    }
+}
+
+/* ══════════════════════════════════════════════
+   카메라 시작
+══════════════════════════════════════════════ */
+async function startCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        document.getElementById('video').srcObject = stream;
+    } catch(err) {
+        alert('카메라에 접근할 수 없습니다. 권한을 확인해주세요.');
+    }
+}
+
+/* ══════════════════════════════════════════════
+   초기화
+══════════════════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', () => {
+    buildLangMenus();
+    showView('view-initial');
+    startCamera();
+});
+</script>
+</body>
+</html>
