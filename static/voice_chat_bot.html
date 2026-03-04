@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>음성 챗봇 - 도슨트봇</title>    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    }
+
+    /* ── 채팅 말풍선 ── */
+    .message {
+      display: flex;
+      margin-bottom: 12px;
+    }
+    .message p {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      line-height: 1.5;
+      font-size: 15px;
+    }
+    .user_text {
+      justify-content: flex-end;
+    }
+    .user_text p {
+      background: linear-gradient(135deg, #0ea5e9, #3b82f6);
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    .ai {
+      justify-content: flex-start;
+    }
+    .ai p {
+      background: white;
+      color: #1e293b;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .system {
+      justify-content: center;
+    }
+    .system p {
+      background: transparent;
+      color: #94a3b8;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    /* ── Play 버튼 blink ── */
+    @keyframes blinkSoft {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+    .blink-soft {
+      animation: blinkSoft 1s ease-in-out infinite;
+    }
+
+    /* ── 음성 파형 애니메이션 ── */
+    @keyframes waveBar {
+      0%, 100% { transform: scaleY(0.4); }
+      50%       { transform: scaleY(1); }
+    }
+    .wave-bar {
+      width: 6px;
+      border-radius: 3px;
+      background: #3b82f6;
+      animation: waveBar 0.9s ease-in-out infinite;
+    }
+    .wave-bar:nth-child(1) { animation-delay: 0.0s; height: 32px; }
+    .wave-bar:nth-child(2) { animation-delay: 0.1s; height: 48px; }
+    .wave-bar:nth-child(3) { animation-delay: 0.2s; height: 24px; }
+    .wave-bar:nth-child(4) { animation-delay: 0.3s; height: 40px; }
+    .wave-bar:nth-child(5) { animation-delay: 0.4s; height: 32px; }
+  </style>
+</head>
+<body>
+
+<div id="chatbot-view" class="min-h-screen bg-gradient-to-b from-sky-100 to-blue-100 flex flex-col">
+
+  <!-- ── Header ── -->
+  <header class="bg-gradient-to-r from-sky-500 to-blue-500 text-white p-4 flex items-center gap-3 shadow-md">
+    <button onclick="location.href='index.html'" class="text-white hover:bg-white/20 w-10 h-10 rounded-lg flex items-center justify-center transition-colors" title="뒤로가기">
+      <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>
+      </svg>
+    </button>
+    <div class="flex items-center gap-2 flex-1">
+      <img src="assets/robot.png" alt="Docent Bot" class="w-10 h-10 object-contain" onerror="this.style.display='none'">
+      <div>
+        <div class="font-semibold flex items-center gap-2">
+          AI 도슨트 봇
+          <span class="text-xs bg-white text-sky-600 px-2 py-0.5 rounded font-medium">AI Docentbot</span>
+        </div>
+      </div>
+    </div>
+    <button
+      id="goto-ar-btn"
+      class="text-white hover:bg-white/20 w-12 h-12 rounded-lg flex items-center justify-center transition-colors"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+        <circle cx="12" cy="13" r="3"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- ── Chat transcript ── -->
+  <main id="transcript" class="flex-1 overflow-y-auto p-4 space-y-2"></main>
+
+  <!-- ══════════════════════════════════════
+       Voice Input Modal
+  ══════════════════════════════════════ -->
+  <div id="voiceModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
+    <div class="bg-white rounded-3xl p-8 mx-6 w-full max-w-sm shadow-2xl">
+
+      <!-- Close -->
+      <div class="flex justify-end mb-2">
+        <button onclick="cancelVoiceInput()" class="text-gray-400 hover:text-gray-600">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Mic icon + pulse rings -->
+      <div class="flex flex-col items-center mb-6">
+        <div class="relative mb-6">
+          <div class="w-24 h-24 bg-gradient-to-br from-red-400 to-red-600 rounded-full flex items-center justify-center shadow-lg">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" x2="12" y1="19" y2="22"/>
+            </svg>
+          </div>
+          <div class="absolute inset-0 -m-3 pointer-events-none">
+            <div class="w-32 h-32 border-4 border-red-400 rounded-full animate-ping opacity-20"></div>
+          </div>
+          <div class="absolute inset-0 -m-6 pointer-events-none" style="animation-delay:0.3s">
+            <div class="w-40 h-40 border-4 border-red-300 rounded-full animate-ping opacity-10"></div>
+          </div>
+        </div>
+
+        <h3 class="text-xl font-bold text-gray-800 mb-1">음성 입력 중...</h3>
+        <p class="text-sm text-gray-500 mb-4 text-center">질문을 말씀해주세요</p>
+
+        <!-- 실시간 음성 텍스트 표시 영역 -->
+        <div id="voiceInputText"
+          class="w-full min-h-[80px] bg-gray-50 rounded-2xl p-4 mb-6 border-2 border-gray-200 flex items-center justify-center transition-all">
+          <!-- 기본: 파형 애니메이션 -->
+          <div id="waveAnim" class="flex items-center gap-1">
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+            <div class="wave-bar"></div>
+          </div>
+          <!-- 인식된 텍스트 (숨김 상태로 시작) -->
+          <p id="recognizedText" class="text-gray-800 text-center hidden"></p>
+        </div>
+
+        <!-- Buttons -->
+        <div class="flex gap-3 w-full">
+          <button
+            onclick="cancelVoiceInput()"
+            class="flex-1 py-4 rounded-xl border-2 border-gray-300 hover:bg-gray-100 transition-colors text-gray-700 font-medium"
+          >취소 (Cancel)</button>
+          <button
+            id="sendVoiceBtn"
+            onclick="sendVoiceInput()"
+            disabled
+            class="flex-1 bg-blue-500 hover:bg-blue-600 text-white py-4 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium"
+          >전송 (Send)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Footer / Input area ── -->
+  <footer class="bg-white flex items-center gap-2 border-t px-3 py-2">
+
+    <!-- 마이크 버튼 -->
+    <button
+      id="micBtn"
+      onclick="startVoiceInput()"
+      class="text-gray-600 hover:bg-gray-100 w-10 h-14 rounded-lg flex items-center justify-center transition-colors flex-shrink-0"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" x2="12" y1="19" y2="22"/>
+      </svg>
+    </button>
+
+    <!-- 텍스트 입력 -->
+    <div class="relative flex-1">
+      <input
+        type="text"
+        id="text-input"
+        placeholder="텍스트로 질문하세요..."
+        class="w-full h-10 pl-4 pr-12 rounded-full border border-gray-300 text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-blue-400 text-sm"
+        onkeypress="if(event.key==='Enter') sendTextMessage()"
+      >
+      <button
+        id="send-btn"
+        onclick="sendTextMessage()"
+        class="absolute right-2 top-1/2 -translate-y-1/2 text-blue-500 hover:text-blue-600 p-1.5 rounded-full hover:bg-blue-50 transition-colors"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Play / Pause 버튼 -->
+    <button
+      id="playBtn"
+      class="text-gray-600 hover:bg-gray-100 w-14 h-14 rounded-lg flex items-center justify-center transition-colors flex-shrink-0"
+      title="음성 재생 / 일시정지"
+    >
+      <!-- 재생 아이콘 (기본) -->
+      <svg id="iconPlay" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/>
+        <path d="M16 9a5 5 0 0 1 0 6"/>
+        <path d="M19.364 18.364a9 9 0 0 0 0-12.728"/>
+      </svg>
+      <!-- 일시정지 아이콘 (재생 중) -->
+      <svg id="iconPause" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="hidden">
+        <rect x="6" y="4" width="4" height="16" rx="1"/>
+        <rect x="14" y="4" width="4" height="16" rx="1"/>
+      </svg>
+    </button>
+  </footer>
+</div>
+
+<!-- ══════════════════════════════════════════
+     SCRIPT
+══════════════════════════════════════════ -->
+<script>
+/* ──────────────────────────────────────────
+   전역 상태
+────────────────────────────────────────── */
+let socket = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+let lastInputWasVoice = false;
+
+let audioContext = null;
+let currentAudioSource = null;   // BufferSource (재생 중인 오디오)
+let currentAudioBuffer = null;   // 마지막으로 받은 전체 AudioBuffer
+let audioPlaybackOffset = 0;     // 현재까지 재생한 위치(초)
+let audioStartedAt = 0;          // audioContext.currentTime 기준 시작 시각
+let isPlaying = false;
+
+let recognition = null;          // Web Speech API
+let voiceText = "";              // 팝업에서 인식된 텍스트
+
+/* ──────────────────────────────────────────
+   DOM refs
+────────────────────────────────────────── */
+const transcriptDiv = document.getElementById('transcript');
+const textInput     = document.getElementById('text-input');
+const sendBtn       = document.getElementById('send-btn');
+const micBtn        = document.getElementById('micBtn');
+const playBtn       = document.getElementById('playBtn');
+const iconPlay      = document.getElementById('iconPlay');
+const iconPause     = document.getElementById('iconPause');
+const voiceModal    = document.getElementById('voiceModal');
+const sendVoiceBtn  = document.getElementById('sendVoiceBtn');
+const waveAnim      = document.getElementById('waveAnim');
+const recognizedText= document.getElementById('recognizedText');
+
+/* ──────────────────────────────────────────
+   유틸
+────────────────────────────────────────── */
+function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream; }
+
+function addMessage(type, data) {
+  const wrap = document.createElement('div');
+  wrap.className = 'message ' + (type === 'user_text' ? 'user_text' : type === 'ai_text' ? 'ai' : 'system');
+  const p = document.createElement('p');
+  if (type === 'ai_image') {
+    wrap.innerHTML = `<img src="${data.url}" alt="AI image" style="max-width:80%;border-radius:12px;">`;
+  } else {
+    p.textContent = data;
+    wrap.appendChild(p);
+  }
+  transcriptDiv.appendChild(wrap);
+  // 새 메시지가 뷰포트 밖에 있어도 항상 부드럽게 스크롤
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
+
+function setInputsEnabled(enabled) {
+  sendBtn.disabled = !enabled;
+  textInput.disabled = !enabled;
+  micBtn.disabled = !enabled;
+}
+
+/* ──────────────────────────────────────────
+   Play 버튼 상태
+────────────────────────────────────────── */
+function setPlayState(playing) {
+  isPlaying = playing;
+  if (playing) {
+    iconPlay.classList.add('hidden');
+    iconPause.classList.remove('hidden');
+    playBtn.classList.add('blink-soft');
+  } else {
+    iconPlay.classList.remove('hidden');
+    iconPause.classList.add('hidden');
+    playBtn.classList.remove('blink-soft');
+  }
+}
+
+/* ──────────────────────────────────────────
+   오디오 재생 / 일시정지 / 재개
+────────────────────────────────────────── */
+async function ensureAudioContext() {
+  if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioContext.state === 'suspended') await audioContext.resume();
+}
+
+function stopSource() {
+  if (currentAudioSource) {
+    currentAudioSource.onended = null;
+    try { currentAudioSource.stop(); } catch(e) {}
+    currentAudioSource = null;
+  }
+}
+
+async function playFromOffset(offset) {
+  await ensureAudioContext();
+  stopSource();
+
+  currentAudioSource = audioContext.createBufferSource();
+  currentAudioSource.buffer = currentAudioBuffer;
+  currentAudioSource.connect(audioContext.destination);
+  currentAudioSource.start(0, offset);
+  audioStartedAt = audioContext.currentTime - offset;
+
+  currentAudioSource.onended = () => {
+    // 자연 종료
+    audioPlaybackOffset = 0;
+    currentAudioSource = null;
+    setPlayState(false);
+    setInputsEnabled(true);
+  };
+
+  setPlayState(true);
+  setInputsEnabled(false);
+}
+
+async function playReceivedAudio(audioBlob) {
+  await ensureAudioContext();
+  try {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    currentAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    audioPlaybackOffset = 0;
+    await playFromOffset(0);
+  } catch(e) {
+    console.error('오디오 재생 오류:', e);
+    setInputsEnabled(true);
+  }
+}
+
+function pauseAudio() {
+  if (!currentAudioSource) return;
+  // 현재까지 재생한 위치 저장
+  audioPlaybackOffset = audioContext.currentTime - audioStartedAt;
+  stopSource();
+  setPlayState(false);
+  setInputsEnabled(true);
+}
+
+async function resumeAudio() {
+  if (!currentAudioBuffer) return;
+  await playFromOffset(audioPlaybackOffset);
+}
+
+playBtn.addEventListener('click', async () => {
+  if (!currentAudioBuffer) return; // 받은 오디오 없으면 무시
+  if (isPlaying) {
+    pauseAudio();
+  } else {
+    await resumeAudio();
+  }
+});
+
+/* ──────────────────────────────────────────
+   WebSocket
+────────────────────────────────────────── */
+function connectWebSocket() {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  socket = new WebSocket(`${proto}//${window.location.host}/ws`);
+
+  socket.onopen = () => {
+    setInputsEnabled(true);
+    addMessage('system', '챗봇이 준비되었습니다.');
+  };
+
+  socket.onmessage = async (event) => {
+    if (event.data instanceof Blob) {
+      // 오디오 응답
+      const audioBlob = event.data;
+      setInputsEnabled(true);
+      if (lastInputWasVoice && !isIOS()) {
+        await playReceivedAudio(audioBlob);
+      } else {
+        // 받아두기만 하고 play 버튼으로 재생
+        await ensureAudioContext();
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        currentAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        audioPlaybackOffset = 0;
+        setPlayState(false);
+      }
+    } else {
+      const msg = JSON.parse(event.data);
+      addMessage(msg.type, msg.data);
+    }
+  };
+
+  socket.onclose = () => {
+    addMessage('system', '서버 연결이 종료되었습니다.');
+    setInputsEnabled(false);
+  };
+}
+
+/* ──────────────────────────────────────────
+   텍스트 전송
+────────────────────────────────────────── */
+function sendTextMessage() {
+  const text = textInput.value.trim();
+  if (!text) return;
+  lastInputWasVoice = false;
+
+  addMessage('user_text', text);
+  textInput.value = '';
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'text', data: text }));
+    setInputsEnabled(false);
+  } else {
+    // 서버 없을 때 데모용 더미 응답
+    demoResponse(text);
+  }
+}
+
+/* 데모용: 서버 없을 때 ───────────────────── */
+function demoResponse(userText) {
+  setTimeout(() => {
+    const reply = `"${userText}"에 대한 답변입니다. (데모 모드 — 서버가 연결되지 않았습니다.)`;
+    addMessage('ai_text', reply);
+    setInputsEnabled(true);
+  }, 800);
+}
+
+/* ──────────────────────────────────────────
+   음성 입력 모달
+────────────────────────────────────────── */
+function startVoiceInput() {
+  voiceText = '';
+  sendVoiceBtn.disabled = true;
+  recognizedText.textContent = '';
+  recognizedText.classList.add('hidden');
+  waveAnim.classList.remove('hidden');
+  voiceModal.classList.remove('hidden');
+
+  // Web Speech API 사용 가능 여부 확인
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognition) {
+    recognition = new SpeechRecognition();
+    recognition.lang = 'ko-KR';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+
+    recognition.onresult = (e) => {
+      let interim = '', final = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t;
+        else interim += t;
+      }
+      voiceText = final || interim;
+      showVoiceText(voiceText);
+    };
+
+    recognition.onend = () => {
+      if (voiceText) {
+        sendVoiceBtn.disabled = false;
+      }
+    };
+
+    recognition.onerror = (e) => {
+      console.warn('음성 인식 오류:', e.error);
+      showVoiceText('인식 오류가 발생했습니다. 다시 시도해주세요.');
+    };
+
+    recognition.start();
+  } else {
+    // Web Speech API 미지원 → 데모 시뮬레이션
+    setTimeout(() => {
+      voiceText = '이 작품의 배경은 어디인가요?';
+      showVoiceText(voiceText);
+      sendVoiceBtn.disabled = false;
+    }, 1500);
+  }
+}
+
+function showVoiceText(text) {
+  waveAnim.classList.add('hidden');
+  recognizedText.textContent = text;
+  recognizedText.classList.remove('hidden');
+}
+
+function cancelVoiceInput() {
+  if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
+  voiceText = '';
+  voiceModal.classList.add('hidden');
+}
+
+function sendVoiceInput() {
+  if (!voiceText.trim()) return;
+  if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
+  voiceModal.classList.add('hidden');
+
+  lastInputWasVoice = true;
+  addMessage('user_text', voiceText);
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'text', data: voiceText }));
+    setInputsEnabled(false);
+  } else {
+    demoResponse(voiceText);
+  }
+
+  voiceText = '';
+}
+
+/* ──────────────────────────────────────────
+   AR 버튼
+────────────────────────────────────────── */
+document.getElementById('goto-ar-btn').onclick = () => {
+  window.open('/ar', '_blank');
+};
+
+/* ──────────────────────────────────────────
+   초기화
+────────────────────────────────────────── */
+window.addEventListener('DOMContentLoaded', () => {
+  setInputsEnabled(false);
+  connectWebSocket();
+
+  textInput.addEventListener('keypress', e => {
+    if (e.key === 'Enter') sendTextMessage();
+  });
+});
+</script>
+</body>
+</html>
