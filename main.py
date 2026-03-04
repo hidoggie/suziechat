@@ -1,10 +1,9 @@
-# main.py (11월 21일 데모셋팅하면서 오류 수정작업)
+# main.py
 
 import asyncio
 import os
 import re
 import json
-#--- import time ---
 import shutil
 import base64
 import io
@@ -16,11 +15,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 import fitz  # PyMuPDF
-import numpy as np # 벡터 계산을 위해 추가
+import numpy as np
 
 import google.generativeai as genai
 from google.cloud import speech, texttospeech
-
 
 # --- 1. 설정 ---
 KNOWLEDGE_PDF_PATH = "knowledge.pdf"
@@ -33,31 +31,98 @@ SAMPLE_RATE = 48000
 EMBEDDING_MODEL = "models/gemini-embedding-001"
 CHAT_MODEL_NAME = "gemini-2.5-flash"
 
-# --- 2. 전역 변수 및 앱 초기화 ---
-app = FastAPI()
+# --- 2. 전역 변수 ---
 PDF_CONTENT = []
 MODEL, STT_CLIENT, TTS_CLIENT = None, None, None
 INITIALIZATION_ERROR = None
+KNOWLEDGE_CONTEXT = ""
 
-from langdetect import detect
+# ──────────────────────────────────────────────────────────────
+# 언어 설정 테이블
+# key   : 프론트엔드가 보내는 lang 코드 (ISO 639-1)
+# value : (BCP-47 language_code, Google TTS voice_name,
+#          STT language_code, 도슨트 프롬프트용 언어명)
+# ──────────────────────────────────────────────────────────────
+LANG_CONFIG = {
+    "ko": ("ko-KR", "ko-KR-Wavenet-A", "ko-KR",  "한국어"),
+    "en": ("en-US", "en-US-Wavenet-D", "en-US",  "English"),
+    "ja": ("ja-JP", "ja-JP-Wavenet-B", "ja-JP",  "日本語"),
+    "zh": ("cmn-CN", "cmn-CN-Wavenet-A", "cmn-Hans-CN", "中文"),
+    "fr": ("fr-FR", "fr-FR-Wavenet-C", "fr-FR",  "Français"),
+    "de": ("de-DE", "de-DE-Wavenet-D", "de-DE",  "Deutsch"),
+    "es": ("es-ES", "es-ES-Wavenet-B", "es-ES",  "Español"),
+}
+DEFAULT_LANG = "ko"
 
-def get_voice_params(text):
-    """텍스트의 언어를 감지하여 적절한 구글 TTS 설정을 반환합니다."""
-    try:
-        lang = detect(text)
-        if lang == 'en':
-            return "en-US", "en-US-Wavenet-D"
-        elif lang == 'ja':
-            return "ja-JP", "ja-JP-Wavenet-B"
-        elif lang == 'ko':
-            return "ko-KR", "ko-KR-Wavenet-A"
-        # 추가 언어 설정 가능
-        return "ko-KR", "ko-KR-Wavenet-A" # 기본값
-    except:
-        return "ko-KR", "ko-KR-Wavenet-A"
+
+def get_lang_config(lang_code: str) -> tuple:
+    """
+    lang_code 에 해당하는 (tts_lang, tts_voice, stt_lang, lang_name) 을 반환.
+    없으면 기본값(ko) 사용.
+    """
+    return LANG_CONFIG.get(lang_code, LANG_CONFIG[DEFAULT_LANG])
 
 
-# --- 3. Lifespan을 이용한 안정적인 앱 초기화 ---
+def get_voice_params_from_code(lang_code: str) -> tuple[str, str]:
+    """TTS 에 필요한 (language_code, voice_name) 만 반환."""
+    cfg = get_lang_config(lang_code)
+    return cfg[0], cfg[1]  # tts_lang, tts_voice
+
+
+# ──────────────────────────────────────────────────────────────
+# 도슨트 프롬프트 빌더 (언어별)
+# ──────────────────────────────────────────────────────────────
+def build_docent_prompt(lang_code: str, context_text: str, user_text: str) -> str:
+    """언어별 도슨트 해설 생성 프롬프트를 반환합니다."""
+    _, _, _, lang_name = get_lang_config(lang_code)
+
+    return f"""
+You are a professional museum docent.
+The visitor has asked a question about an exhibit.
+You MUST answer in {lang_name} regardless of the language of the context below.
+
+[Important Rules]
+1. Answer ONLY in {lang_name}.
+2. Base your answer solely on the provided context. Do not use outside knowledge.
+3. If the context does not contain relevant information, say so politely in {lang_name}.
+4. Keep the answer within 300 characters, using 3-4 natural spoken sentences.
+5. Do NOT use special symbols (*, -, #, •). Use natural conjunctions instead.
+6. Separate every 1-2 sentences with a blank line (double newline) for readability.
+7. Do NOT start with "This is..." or "이것은...". Use the subject's name directly.
+8. Speak naturally, as if explaining out loud to a visitor.
+
+--- Context ---
+{context_text}
+
+--- Question ---
+{user_text}
+"""
+
+
+def build_ar_summarize_prompt(lang_code: str, context_text: str) -> str:
+    """AR 이미지 인식 후 해설 생성 프롬프트 (언어별)."""
+    _, _, _, lang_name = get_lang_config(lang_code)
+
+    return f"""
+You are a professional museum docent.
+Below is information about a specific exhibit. Summarize the key points in {lang_name} 
+as if you are explaining it to a visitor in person.
+
+[Important Rules]
+1. Answer ONLY in {lang_name}.
+2. If the original text is just a short caption (e.g. "Figure 10 - Outdoor Gallery"), 
+   create one natural introductory sentence rather than saying "no information available."
+3. Do NOT invent details not present in the source text.
+4. Do NOT use special symbols (*, -, #, •).
+5. Separate every 1-2 sentences with a blank line for readability.
+6. Do NOT open with a greeting. Start directly with the explanation.
+
+--- Source Text ---
+{context_text}
+"""
+
+
+# --- 3. Lifespan 초기화 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global MODEL, STT_CLIENT, TTS_CLIENT, PDF_CONTENT, INITIALIZATION_ERROR, KNOWLEDGE_CONTEXT
@@ -67,109 +132,86 @@ async def lifespan(app: FastAPI):
         if IMAGES_DIR.exists():
             shutil.rmtree(IMAGES_DIR)
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-        
+
         pdf_path = Path(__file__).resolve().parent / KNOWLEDGE_PDF_PATH
-        if not pdf_path.exists(): 
+        if not pdf_path.exists():
             print(f"경고: {pdf_path} 파일을 찾을 수 없습니다.")
-        #    raise FileNotFoundError(f"{pdf_path} 파일을 찾을 수 없습니다.")
-        
+
         doc = fitz.open(pdf_path)
-        print(f"📄 [DEBUG] PDF 열기 성공. 총 페이지 수: {len(doc)}")
+        print(f"📄 PDF 열기 성공. 총 페이지 수: {len(doc)}")
         content_list = []
 
         for page_num, page in enumerate(doc):
-            print(f"Processing Page {page_num + 1}/{len(doc)}...") # 진행 상황 출력
-            page = doc.load_page(page_num) # 페이지를 번호로 명시하여 로드
-            
+            print(f"Processing Page {page_num + 1}/{len(doc)}...")
+            page = doc.load_page(page_num)
             page_text = page.get_text("text")
             image_files = []
 
-            page_images = page.get_images(full=True)
-
-    #        page_data = {"page": page_num, "text": page_text, "images": []}
-           
-            
-            for img_index, img in enumerate(page_images):
+            for img_index, img in enumerate(page.get_images(full=True)):
                 xref = img[0]
                 base_image = doc.extract_image(xref)
                 image_bytes = base_image["image"]
                 try:
-    #                image_obj = Image.open(io.BytesIO(image_bytes))
                     image_filename = f"page_{page_num}_img_{img_index}.png"
-
                     with open(IMAGES_DIR / image_filename, "wb") as f:
                         f.write(image_bytes)
-                    image_files.append(image_filename)    
-
-     #               image_obj.save(IMAGES_DIR / image_filename, "PNG")
-     #               page_data["images"].append(image_filename)
+                    image_files.append(image_filename)
                 except Exception as img_e:
                     print(f"경고: 이미지 처리 실패 (페이지 {page_num}): {img_e}")
 
             content_list.append({"page": page_num + 1, "text": page_text, "images": image_files})
-    #        ontent_list.append(page_data)
             await asyncio.sleep(0.01)
 
         PDF_CONTENT = content_list
-        print("✅ [DEBUG] PDF 처리 완료")
-        KNOWLEDGE_CONTEXT = "\n\n".join([page['text'] for page in content_list]) # 전체 텍스트 컨텍스트 생성
+        KNOWLEDGE_CONTEXT = "\n\n".join([p['text'] for p in content_list])
+        print(f"✅ PDF 처리 완료: {len(doc)} 페이지")
 
-        print(f"✅ PDF 처리 완료: {len(doc)} 페이지, {sum(len(p['images']) for p in PDF_CONTENT)}개 이미지 추출")
-
-       # ✨ Gemini API 설정 먼저 수행
-        if not GEMINI_API_KEY: 
+        if not GEMINI_API_KEY:
             raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
         genai.configure(api_key=GEMINI_API_KEY)
 
-        # PDF 텍스트에 대한 임베딩 벡터 생성
-        texts_to_embed = [page['text'] for page in PDF_CONTENT if page['text'].strip()]
+        # 임베딩 생성
+        texts_to_embed = [p['text'] for p in PDF_CONTENT if p['text'].strip()]
         if texts_to_embed:
             embedding_response = genai.embed_content(
-               model=EMBEDDING_MODEL,
-               content=texts_to_embed,
-               task_type="retrieval_document",
-               output_dimensionality=768  # ✨ 데이터를 1/4로 줄여 메모리 확보
-            )            
-           
+                model=EMBEDDING_MODEL,
+                content=texts_to_embed,
+                task_type="retrieval_document",
+                output_dimensionality=768
+            )
             embeddings_list = embedding_response.get('embeddings') or embedding_response.get('embedding')
-
             if not embeddings_list:
-                raise KeyError(f"API 응답에서 임베딩 데이터를 찾을 수 없습니다. 응답 구조: {list(embedding_response.keys())}")
-            
+                raise KeyError(f"임베딩 데이터를 찾을 수 없습니다. 응답 구조: {list(embedding_response.keys())}")
+
             text_index = 0
-            for i, page_data in enumerate(PDF_CONTENT):
+            for page_data in PDF_CONTENT:
                 if page_data['text'].strip():
                     page_data['embedding'] = embeddings_list[text_index]
                     text_index += 1
-            print(f"✅ {len(texts_to_embed)}개 텍스트에 대한 임베딩 생성 완료.")
+            print(f"✅ {len(texts_to_embed)}개 임베딩 생성 완료.")
 
-
-        # API 클라이언트 초기화
         STT_CLIENT = speech.SpeechClient.from_service_account_file(STT_CREDENTIALS_PATH)
         TTS_CLIENT = texttospeech.TextToSpeechClient.from_service_account_file(TTS_CREDENTIALS_PATH)
-   #      if not GEMINI_API_KEY: raise Exception("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
-   #      genai.configure(api_key=GEMINI_API_KEY)
-        
+
+        # 챗봇 모델 (한국어 기본 — WebSocket 채팅용)
         system_instruction = f"""
-            당신은 전문 도슨트입니다. 
+            당신은 전문 도슨트입니다.
             사용자의 질문에 대해, 반드시 아래 제공된 '지식 베이스' 내용만을 근거로 해야 합니다.
             당신의 일반 지식을 사용해서는 안 됩니다. '지식 베이스'에 내용이 없다면 "제가 가진 정보로는 답변하기 어렵습니다."라고 솔직하게 말해야 합니다.
-            
+
             ✨✨✨ [중요 규칙] ✨✨✨
-                1.  사용자가 질문한 언어를 감지하여, 반드시 '그 언어'로 답변하세요.
-                    (예: 영어 질문 -> 영어 답변, 일본어 질문 -> 일본어 답변)
+                1. 사용자가 질문한 언어를 감지하여, 반드시 '그 언어'로 답변하세요.
+                   (예: 영어 질문 -> 영어 답변, 일본어 질문 -> 일본어 답변)
                 2. 모든 답변은 반드시 300자 이내로, 핵심 내용만 간결하게 요약해서 생성해야 합니다.
                 3. 답변이 길어질 경우, 가장 중요한 정보부터 순서대로, 최대 3~4개의 문장으로 정리해주세요.
 
-               🗣️ [가독성 및 TTS (음성 읽기) 최적화 규칙 - 매우 중요!]
-                4. [단락 강제 분리] 글이 뭉치지 않도록, 1~2문장이 끝날 때마다 반드시 실제 줄바꿈(엔터)을 두 번 적용하여 문단을 나누세요. (주의: 출력 시 '<줄바꿈>' 같은 지시어 글자를 절대 텍스트로 적지 마세요!)
-                5. 특수기호 사용 금지: 별표(*), 대시(-), 글머리 기호(•), 샵(#) 등의 특수기호는 TTS가 그대로 소리 내어 읽어버리므로 절대 사용하지 마세요.
-                6. 자연스러운 나열: 여러 항목이나 특징을 나열할 때는 기호를 쓰는 대신 "첫째,", "둘째,", "마지막으로," 또는 "먼저,", "또한," 같은 자연스러운 접속사를 사용하세요.
-                7. 아나운서 톤: 관람객이 귀로 들었을 때 편안하도록, 안내원이 직접 말로 설명해 주듯 부드럽고 자연스러운 구어체 문장으로 작성하세요.
-                8. [지시어 사용 금지] 대답을 시작할 때 "이것은 ~입니다" 또는 "이 작품은 ~입니다"라는 식의 지시어를 절대 사용하지 마세요. 반드시 질문자가 물어본 '대상의 이름'을 주어로 직접 사용하여 자연스럽게 설명을 시작하세요. (예: ❌ "이것은 윤장대입니다. 윤장대는..." ➔ ⭕ "윤장대는...")
+               🗣️ [가독성 및 TTS 최적화 규칙]
+                4. 1~2문장이 끝날 때마다 반드시 실제 줄바꿈(엔터)을 두 번 적용하여 문단을 나누세요.
+                5. 별표(*), 대시(-), 글머리 기호(•), 샵(#) 등의 특수기호는 절대 사용하지 마세요.
+                6. 여러 항목 나열 시 "첫째,", "둘째,", "또한," 같은 자연스러운 접속사를 사용하세요.
+                7. 안내원이 직접 말로 설명해 주듯 부드럽고 자연스러운 구어체 문장으로 작성하세요.
+                8. "이것은 ~입니다" 식의 지시어 대신 대상의 이름을 주어로 직접 사용하세요.
 
-               👇 아래의 [올바른 출력 예시]의 형태(문단 띄어쓰기)를 완벽하게 모방해서 답변을 생성하세요.
-            
             [올바른 출력 예시 시작]
             명부시왕은 지장보살을 모시고 저승을 다스리는 열 명의 왕입니다. 화려하게 채색된 옷을 입고 의자에 앉아 있는 모습으로 표현되었습니다.
 
@@ -180,370 +222,409 @@ async def lifespan(app: FastAPI):
 
          --- 지식 베이스 ---
         {KNOWLEDGE_CONTEXT}
-               
         """
-        
+
         generation_config = genai.GenerationConfig(max_output_tokens=MAX_OUTPUT_TOKENS)
-        MODEL = genai.GenerativeModel(CHAT_MODEL_NAME, system_instruction=system_instruction, generation_config=generation_config)
-        
+        MODEL = genai.GenerativeModel(
+            CHAT_MODEL_NAME,
+            system_instruction=system_instruction,
+            generation_config=generation_config
+        )
+
         print("🎉 모든 리소스 초기화 완료. 챗봇이 준비되었습니다.")
 
     except Exception as e:
         INITIALIZATION_ERROR = f"[{type(e).__name__}] {e}"
         print(f"💥 FATAL: 앱 초기화 중 오류 발생! 원인: {INITIALIZATION_ERROR}")
 
-    yield # 애플리케이션 실행
-    
+    yield
+
     print("👋 서버를 종료합니다.")
+
 
 app = FastAPI(lifespan=lifespan)
 
 # --- 4. 헬퍼 함수 ---
 def find_best_page_by_vector(query_text: str):
-    """주어진 텍스트와 가장 유사한 PDF 페이지를 시맨틱 검색으로 찾습니다."""
-    if not query_text or not any('embedding' in p for p in PDF_CONTENT): return None
-    
-# ✨ 쿼리 임베딩
-    res = genai.embed_content(
-       model=EMBEDDING_MODEL, 
-       content=query_text, 
-       task_type="retrieval_query", 
-       output_dimensionality=768
-    )
+    if not query_text or not any('embedding' in p for p in PDF_CONTENT):
+        return None
 
+    res = genai.embed_content(
+        model=EMBEDDING_MODEL,
+        content=query_text,
+        task_type="retrieval_query",
+        output_dimensionality=768
+    )
     query_vector = np.array(res['embedding'])
-    
-    # 벡터 크기 정규화 및 유사도 계산
     pdf_vectors = np.array([p['embedding'] for p in PDF_CONTENT if 'embedding' in p])
-    
-    # 코사인 유사도 계산 (분모가 0이 되는 것을 방지)
+
     dot_products = np.dot(pdf_vectors, query_vector)
     norms = np.linalg.norm(pdf_vectors, axis=1) * np.linalg.norm(query_vector)
-    similarity_scores = dot_products / (norms + 1e-9) 
-    
+    similarity_scores = dot_products / (norms + 1e-9)
+
     best_idx = np.argmax(similarity_scores)
     max_score = similarity_scores[best_idx]
-    
-    print(f"🔍 [DEBUG] 검색 완료. 최고 점수: {max_score:.4f}")
-    return PDF_CONTENT[best_idx] if max_score > 0.4 else None # 기준점을 현실적으로 조정
+    print(f"🔍 벡터 검색 완료. 최고 점수: {max_score:.4f}")
+    return PDF_CONTENT[best_idx] if max_score > 0.4 else None
 
-# --- 4. FastAPI 엔드포인트 ---
+
+# --- 5. FastAPI 엔드포인트 ---
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
-@app.get("/", response_class=FileResponse)
-async def read_index(): return FileResponse(BASE_DIR / "static" / "index.html")
 
-# ✨✨✨ /ar 경로 추가 ✨✨✨
+@app.get("/", response_class=FileResponse)
+async def read_index():
+    return FileResponse(BASE_DIR / "static" / "index.html")
+
+
 @app.get("/ar", response_class=FileResponse)
 async def read_ar_page():
     return FileResponse(BASE_DIR / "static" / "ar.html")
 
+
 @app.get("/api/pdf-content")
 async def get_pdf_content():
     if INITIALIZATION_ERROR or not PDF_CONTENT:
-        # 초기화 실패 또는 컨텐츠가 없는 경우 명확한 오류 반환
-        return JSONResponse(
-            status_code=500, 
-            content={"error": "PDF content not loaded or initialization failed."}
-        )
-    
-    # ✨ 딕셔너리가 아닌, 원본 배열 구조를 그대로 반환하도록 수정
+        return JSONResponse(status_code=500, content={"error": "PDF content not loaded."})
     return JSONResponse(content=PDF_CONTENT)
 
+
+# ──────────────────────────────────────────────────────────────
+# TTS API  ← lang 파라미터 추가
+# ──────────────────────────────────────────────────────────────
 @app.post("/api/tts")
 async def text_to_speech_api(payload: dict = Body(...)):
-    # ✨ 1. 음성 안내 버튼 오류 수정을 위한 최종 TTS API 코드
+    """
+    payload:
+      - text_to_speak : 읽을 텍스트 (필수)
+      - lang          : ISO 639-1 언어 코드 (선택, 없으면 텍스트 자동감지)
+    """
     text_to_speak = payload.get("text_to_speak")
-
-    lang_code, voice_name = get_voice_params(text_to_speak)
+    lang_code     = payload.get("lang", "").strip().lower()  # 프론트에서 전달
 
     if not text_to_speak:
         raise HTTPException(status_code=400, detail="text_to_speak 필드가 필요합니다.")
     if not TTS_CLIENT:
         raise HTTPException(status_code=500, detail="TTS client not initialized")
+
+    # lang 파라미터가 있으면 우선 사용, 없으면 텍스트 자동감지
+    if lang_code and lang_code in LANG_CONFIG:
+        tts_lang, tts_voice = get_voice_params_from_code(lang_code)
+        print(f"🌐 TTS 언어 (프론트 지정): {lang_code} → {tts_lang} / {tts_voice}")
+    else:
+        # 폴백: langdetect 자동감지
+        try:
+            from langdetect import detect
+            detected = detect(text_to_speak)
+        except Exception:
+            detected = DEFAULT_LANG
+        tts_lang, tts_voice = get_voice_params_from_code(detected)
+        print(f"🌐 TTS 언어 (자동감지): {detected} → {tts_lang} / {tts_voice}")
+
     try:
         tts_request = texttospeech.SynthesizeSpeechRequest(
             input=texttospeech.SynthesisInput(text=text_to_speak),
             voice=texttospeech.VoiceSelectionParams(
-               language_code = lang_code, 
-               name = voice_name
+                language_code=tts_lang,
+                name=tts_voice
             ),
-            audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3),
+            audio_config=texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3
+            ),
         )
         tts_response = await asyncio.to_thread(TTS_CLIENT.synthesize_speech, request=tts_request)
         audio_base64 = base64.b64encode(tts_response.audio_content).decode('utf-8')
         return {"audio": audio_base64}
+
     except Exception as e:
-        print(f"💥 TTS API 엔드포인트 오류: {e}")
+        print(f"💥 TTS API 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    
-
-# ✨✨✨ AR 이미지 인식을 위한 새로운 AI 쿼리 엔드포인트 추가 ✨✨✨
-@app.post("/api/ar-query")
-async def ar_query(image_name: str = Body(..., embed=True)):
-    """
-    인식된 이미지 이름을 받아, 해당 이미지의 컨텍스트를 바탕으로
-    Gemini가 동적으로 생성한 설명과 TTS 오디오를 반환합니다.
-    """
-    if MODEL is None:
-        return {"error": "Model not initialized"}
-
-    # PDF 컨텐츠에서 이미지 이름으로 해당 페이지의 텍스트 찾기
-    context_text = ""
-    for page in PDF_CONTENT:
-        if image_name in page["images"]:
-            context_text = page["text"]
-            break
-    
-    if not context_text:
-        return {"error": "Context not found for this image"}
-
-    try:
-        # Gemini에게 동적 설명을 생성하도록 요청하는 프롬프트
-        prompt = f"""
-        당신은 전문 박물관 도슨트입니다.
-        아래는 한 전시물에 대한 기본 정보입니다. 이 정보를 바탕으로, 실제 관람객에게 설명하듯이 생생하고 흥미로운 해설을 1~2 문장으로 간결하게 생성해주세요.
-
-        --- 기본 정보 ---
-        {context_text}
-        """
-        
-        gemini_response = await MODEL.generate_content_async(prompt)
-        ai_text = gemini_response.text.strip()
-
-        lang_code, voice_name = get_voice_params(ai_text) # ✨ 언어 감지
-
-        # 생성된 설명으로 TTS 오디오 생성
-        tts_request = texttospeech.SynthesizeSpeechRequest(
-            input=texttospeech.SynthesisInput(text=ai_text),
-            voice=texttospeech.VoiceSelectionParams(
-              language_code=lang_code,
-              name=voice_name
-            ),
-            audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3),
-        )
-        tts_response = await asyncio.to_thread(TTS_CLIENT.synthesize_speech, request=tts_request)
-        
-        import base64
-        audio_base64 = base64.b64encode(tts_response.audio_content).decode('utf-8')
-
-        return {
-            "text": ai_text,
-            "audio": audio_base64
-        }
-
-    except Exception as e:
-        print(f"💥 AR 쿼리 처리 오류: {e}")
-        return {"error": str(e)}    
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    print("✅ WebSocket 연결 성공") # 로그 추가
-    
-    if INITIALIZATION_ERROR:
-        print(f"❌ [DEBUG] 초기화 에러 발생: {INITIALIZATION_ERROR}") # 로그 추가
-        await websocket.send_json({"type": "error", "data": f"서버 초기화 실패: {INITIALIZATION_ERROR}"})
-        await websocket.close(); return
-            
-    client_id = f"{websocket.client.host}:{websocket.client.port}"
-    print(f"✅ 클라이언트 연결됨: {client_id}")
-    try:
-        while True:
-            print(f"⏳ [DEBUG] ({client_id}) 메시지 수신 대기 중...") # 로그 추가
-            raw_data = await websocket.receive_json()
-            print(f"📩 [DEBUG] ({client_id}) 데이터 수신됨: {raw_data.get('type')}") # 로그 추가
-            message_type = raw_data.get("type"); 
-            user_input = raw_data.get("data")
-            user_text = ""
-
-            if message_type == "audio":
-                print(f"🎤 [DEBUG] ({client_id}) 오디오 데이터 처리 시작") # 로그 추가
-                import base64
-                audio_bytes = base64.b64decode(user_input)
-                stt_request = speech.RecognizeRequest(
-                  config=speech.RecognitionConfig(
-                     encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS, 
-                     sample_rate_hertz=SAMPLE_RATE, 
-                     language_code="ko-KR",
-                     alternative_language_codes=["en-US", "ja-JP"]
-                  ), 
-                  audio=speech.RecognitionAudio(content=audio_bytes)
-                )
-                stt_response = await asyncio.to_thread(STT_CLIENT.recognize, request=stt_request)
-                user_text = stt_response.results[0].alternatives[0].transcript if stt_response.results else ""
-                if user_text:
-                    print(f"🗣️ [DEBUG] ({client_id}) STT 변환 결과: {user_text}") # 로그 추가 
-                    await websocket.send_json({"type": "user_text", "data": user_text})
-            
-            elif message_type == "text":
-                user_text = user_input
-                print(f"⌨️ [DEBUG] ({client_id}) 텍스트 입력 수신: {user_text}") # 로그 추가
-
-            if user_text:
-                print(f"👤 [DEBUG] ({client_id}) 최종 사용자 입력: {user_text}")
-                print(f"👤 사용자 ({client_id}): {user_text}")
-
-                if "이제 그만" in user_text.strip():
-                    ai_text = "챗봇을 종료합니다. 이용해주셔서 감사합니다."
-                    await websocket.send_json({"type": "ai_text", "data": ai_text})
-                    # ... (TTS 및 종료 로직)
-                    break
-                
-                 # --- ✨ 2. 백엔드가 직접 이미지 표시 의도 파악 (핵심 수정) ---
-                image_keywords = ["보여줘", "사진", "그림", "이미지", "생김새", "모습"]
-                show_image_intent = any(keyword in user_text for keyword in image_keywords)
-                print(f"🖼️ [DEBUG] ({client_id}) 이미지 요청 의도: {show_image_intent}") # 로그 추가
-                print(f"🔍 [DEBUG] ({client_id}) PDF 검색 시작...") # 로그 추가
-
-                keywords = re.findall(r'[\w가-힣]{2,}', user_text)
-                best_match = {"score": 0, "page_data": None}
-                for page in PDF_CONTENT:
-                    score = sum(1 for keyword in keywords if keyword.lower() in page["text"].lower())
-                    if score > best_match["score"]:
-                        best_match["score"] = score
-                        best_match["page_data"] = page
-
-                print(f"🔍 [DEBUG] ({client_id}) PDF 검색 완료. 최고 점수: {best_match['score']}") # 로그 추가
-                
-                context_text = "\n\n".join([p['text'] for p in PDF_CONTENT]) # 기본은 전체 컨텍스트 
-                context_images = []
-
-                if best_match["page_data"]:
-                    context_text = best_match["page_data"]["text"]
-                    context_images = best_match["page_data"]["images"]
-                    print(f"✅ [DEBUG] ({client_id}) 컨텍스트 찾음: 페이지 {best_match['page_data']['page']}")
-                else:                    
-                    print(f"⚠️ [DEBUG] ({client_id}) 특정 페이지 매칭 실패. 전체 컨텍스트 사용.")
-                # --- 3. AI에게 이미지 표시 여부를 스스로 결정하도록 지시 ---
-                # 컨텍스트 이미지 목록은 이제 필요 없으므로 프롬프트에서 제외합니다.  사용자가 방금 특정 작품에 대한 설명을 요청했고, 당신은 이제 그 작품의 이미지를 사용자에게 보여주면서 해설을 시작하려고 합니다.
-            
-                prompt = f"""
-                당신은 전문 박물관 도슨트입니다.
-                사용자가 방금 특정 전시물과 관련된 내용의 설명을 요청했고, 당신은 이제 그 전시물의 이미지를 사용자에게 보여주면서 해설을 시작하려고 합니다.
-
-                아래 '원본 텍스트'는 당신이 설명해야 할 작품의 정보입니다. 이 텍스트의 핵심 내용만을 바탕으로 자연스러운 해설을 생성해주세요.
-
-                [매우 중요한 규칙]
-                1. "제공된 정보에는...", "그림 3은..." 과 같이 당신의 상황을 설명하거나 이미지 번호를 언급하지 마세요.
-                2. "안녕하세요" 와 같은 인사말 없이, 바로 설명으로 시작 합니다.
-                3. '원본 텍스트'에 없는 내용은 절대 지어내서는 안 됩니다.
-                
-                --- 컨텍스트 ---
-                {context_text}
-                
-                --- 질문 ---
-                {user_text}
-                
-                               
-                """
-                print(f"🤖 [DEBUG] ({client_id}) Gemini에게 요청 전송 시작...") # 로그 추가               
-                gemini_response = await MODEL.generate_content_async(prompt)
-                ai_text = gemini_response.text.strip()
-                print(f"🤖 [DEBUG] ({client_id}) Gemini 응답 수신 완료: {ai_text[:30]}...") # 로그 추가
-
-                await websocket.send_json({"type": "ai_text", "data": ai_text})
-
-                 # --- 5. 의도(Intent)에 따라 이미지 표시 ---
-                if show_image_intent and best_match["page_data"] and best_match["page_data"]["images"]:
-                    # 검색된 가장 정확한 페이지의 첫 번째 이미지를 전송
-                    image_filename = best_match["page_data"]["images"][0]
-                    image_url = f"/static/images/{image_filename}"
-                    print(f"🖼️ 클라이언트에게 이미지 표시 요청: {image_url}")
-                    await websocket.send_json({"type": "ai_image", "data": {"url": image_url}})
-
-                print(f"🔊 [DEBUG] ({client_id}) TTS 변환 시작...") # 로그 추가
-
-                lang_code, voice_name = get_voice_params(ai_text)
-              
-                tts_request = texttospeech.SynthesizeSpeechRequest(
-                   input=texttospeech.SynthesisInput(text=ai_text), 
-                   voice=texttospeech.VoiceSelectionParams(
-                      language_code = lang_code, 
-                      name = voice_name
-                   ), 
-                   audio_config=texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3))
-                tts_response = await asyncio.to_thread(TTS_CLIENT.synthesize_speech, request=tts_request)
-                if tts_response.audio_content: 
-                    print(f"🔊 [DEBUG] ({client_id}) TTS 오디오 전송") # 로그 추가                  
-                    await websocket.send_bytes(tts_response.audio_content)
-                else:
-                    print(f"❌ [DEBUG] ({client_id}) TTS 오디오 생성 실패")
-
-    except WebSocketDisconnect: print(f"🔌 클라이언트 연결 끊어짐: {client_id}")
-    except Exception as e: print(f"💥 처리 중 오류 ({client_id}): {e}")
-    finally: print(f"🏁 웹소켓 세션 종료: {client_id}")
 
 
-
-    # ✨✨✨ 4. 새로운 이미지 인식 API 엔드포인트 추가 ✨✨✨
+# ──────────────────────────────────────────────────────────────
+# 이미지 인식 API  ← lang 파라미터 추가
+# ──────────────────────────────────────────────────────────────
 @app.post("/api/recognize-image")
 async def recognize_image(payload: dict = Body(...)):
+    """
+    payload:
+      - image : base64 이미지 데이터 (필수)
+      - lang  : ISO 639-1 언어 코드 (선택, 기본 'ko')
+    """
     user_image_b64 = payload.get("image")
+    lang_code      = payload.get("lang", DEFAULT_LANG).strip().lower()
+
     if not user_image_b64:
         raise HTTPException(status_code=400, detail="이미지 데이터가 없습니다.")
+    if lang_code not in LANG_CONFIG:
+        lang_code = DEFAULT_LANG
+
+    _, _, _, lang_name = get_lang_config(lang_code)
+    print(f"🌐 이미지 인식 요청 언어: {lang_code} ({lang_name})")
 
     try:
         user_image_bytes = base64.b64decode(user_image_b64.split(',')[1])
         user_image = Image.open(io.BytesIO(user_image_bytes))
 
-        # --- 1단계: AI에게 이미지 속 '객관적 정보(텍스트, 고유 특징)' 추출 요청 ---
+        # 1단계: 키워드 추출 (언어 무관 — 항상 영어/원문)
         extract_keywords_prompt = [
-            "You are an expert in Optical Character Recognition (OCR) and object identification. Analyze the following image. "
-            "Identify any legible text (like signs or titles) or unique, specific objects. "
-            "Respond ONLY with a comma-separated list of these keywords. Do not add any descriptive sentences. "
+            "You are an expert in OCR and object identification. "
+            "Analyze the image and identify any legible text (signs, titles) or unique objects. "
+            "Respond ONLY with a comma-separated list of keywords. No sentences. "
             "Example: 대웅전, 청룡, 다포 양식",
             user_image
         ]
-        print("🤖 Gemini에게 이미지에서 키워드 추출 요청...")
-        response = await MODEL.generate_content_async(extract_keywords_prompt)
-        keywords = [kw.strip() for kw in response.text.strip().split(',') if kw.strip()]
+        print("🤖 키워드 추출 요청...")
+        kw_response = await MODEL.generate_content_async(extract_keywords_prompt)
+        keywords = [kw.strip() for kw in kw_response.text.strip().split(',') if kw.strip()]
+
         if not keywords:
-            print("❌ 이미지에서 유의미한 키워드를 추출하지 못함.")
-            return {"status": "no_match", "description": "죄송합니다, 사진에서 특징을 인식할 수 없습니다. 더 선명하게 촬영해보세요."}
+            no_match_msg = {
+                "ko": "죄송합니다, 사진에서 특징을 인식할 수 없습니다. 더 선명하게 촬영해보세요.",
+                "en": "Sorry, I couldn't identify features in the photo. Please try a clearer shot.",
+                "ja": "申し訳ありませんが、写真から特徴を認識できませんでした。もっと鮮明に撮影してください。",
+                "zh": "抱歉，无法识别照片中的特征，请尝试拍摄更清晰的照片。",
+                "fr": "Désolé, je n'ai pas pu identifier de caractéristiques. Essayez une photo plus nette.",
+                "de": "Entschuldigung, es konnten keine Merkmale erkannt werden. Bitte fotografieren Sie klarer.",
+                "es": "Lo siento, no pude identificar características. Por favor tome una foto más nítida.",
+            }
+            return {"status": "no_match", "description": no_match_msg.get(lang_code, no_match_msg["ko"])}
+
         print(f"✅ 추출된 키워드: {keywords}")
 
-        # --- 2단계: 추출된 키워드로 PDF 컨텐츠에서 가장 정확한 페이지 검색 ---
+        # 2단계: PDF에서 가장 일치하는 페이지 검색
         best_match = {"score": 0, "page_data": None}
         for page in PDF_CONTENT:
-            score = 0
-            for keyword in keywords:
-                if keyword.lower() in page["text"].lower():
-                    score += 1
+            score = sum(1 for kw in keywords if kw.lower() in page["text"].lower())
             if score > best_match["score"]:
                 best_match["score"] = score
                 best_match["page_data"] = page
-        
+
         if best_match["score"] == 0 or best_match["page_data"] is None:
-            print("❌ 키워드와 일치하는 PDF 페이지를 찾지 못함.")
-            return {"status": "no_match", "description": "죄송합니다, 이 이미지와 일치하는 정보를 찾을 수 없습니다."}
-        
+            no_info_msg = {
+                "ko": "죄송합니다, 이 이미지와 일치하는 정보를 찾을 수 없습니다.",
+                "en": "Sorry, no matching information was found for this image.",
+                "ja": "申し訳ありませんが、この画像に一致する情報が見つかりませんでした。",
+                "zh": "抱歉，找不到与此图片匹配的信息。",
+                "fr": "Désolé, aucune information correspondante n'a été trouvée pour cette image.",
+                "de": "Entschuldigung, es wurden keine passenden Informationen für dieses Bild gefunden.",
+                "es": "Lo siento, no se encontró información coincidente para esta imagen.",
+            }
+            return {"status": "no_match", "description": no_info_msg.get(lang_code, no_info_msg["ko"])}
+
         context_text = best_match["page_data"]["text"]
-        matched_page_num = best_match["page_data"]["page"]
-        print(f"✅ 가장 일치하는 페이지 찾음: 페이지 {matched_page_num} (키워드 점수: {best_match['score']})")
+        matched_page = best_match["page_data"]["page"]
+        print(f"✅ 매칭 페이지: {matched_page} (키워드 점수: {best_match['score']})")
 
-        # --- 3단계: 검색된 '정확한' 텍스트의 최종 요약 요청 ---
-        summarize_prompt = f"""
-        당신은 전문 박물관 도슨트입니다.
-        아래 텍스트는 하나의 특정 전시물에 대한 정보입니다. 이 텍스트의 핵심 내용만을 바탕으로, 실제 관람객에게 설명하듯이 생생하고 흥미로운 해설을 생성해주세요.
-
-        [매우 중요한 규칙]
-        1. '원본 텍스트'에 상세한 설명이 있다면, 그 내용의 핵심만을 간결하고 흥미롭게 요약해야 합니다.
-        2. 만약 '원본 텍스트'가 '그림 10 야외전시관'과 같이 매우 짧은 제목이나 캡션에 불과하다면, "정보가 없다"고 말하는 대신, 그 제목을 활용하여 "이것은 야외전시관의 모습입니다." 또는 "이 자료는 야외전시관을 보여주고 있습니다."와 같이 자연스러운 한 문장의 소개를 만들어주세요.
-        3. 주어진 텍스트에 없는 상세한 정보를 지어내서는 안 됩니다.
-        4. "안녕하세요" 와 같은 서두의 인사말은 사용하지 말고 바로 설명으로 시작해야 합니다.
-        
-        --- 원본 텍스트 ---
-        {context_text}
-        """
-        print(f"🤖 Gemini에게 페이지 {matched_page_num} 텍스트 요약 요청...")
+        # 3단계: 선택된 언어로 해설 생성
+        summarize_prompt = build_ar_summarize_prompt(lang_code, context_text)
+        print(f"🤖 페이지 {matched_page} 해설 생성 요청 ({lang_name})...")
         summarize_response = await MODEL.generate_content_async(summarize_prompt)
         final_description = summarize_response.text.strip()
-        
+
         print("✅ 해설 생성 완료.")
         return {"status": "success", "description": final_description}
 
     except Exception as e:
         print(f"💥 이미지 인식/요약 오류: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ──────────────────────────────────────────────────────────────
+# AR 쿼리 API  ← lang 파라미터 추가
+# ──────────────────────────────────────────────────────────────
+@app.post("/api/ar-query")
+async def ar_query(payload: dict = Body(...)):
+    """
+    payload:
+      - image_name : PDF에서 추출된 이미지 파일명 (필수)
+      - lang       : ISO 639-1 언어 코드 (선택, 기본 'ko')
+    """
+    image_name = payload.get("image_name")
+    lang_code  = payload.get("lang", DEFAULT_LANG).strip().lower()
+
+    if not image_name:
+        raise HTTPException(status_code=400, detail="image_name이 필요합니다.")
+    if MODEL is None:
+        return {"error": "Model not initialized"}
+    if lang_code not in LANG_CONFIG:
+        lang_code = DEFAULT_LANG
+
+    _, _, _, lang_name = get_lang_config(lang_code)
+
+    context_text = ""
+    for page in PDF_CONTENT:
+        if image_name in page["images"]:
+            context_text = page["text"]
+            break
+
+    if not context_text:
+        return {"error": "Context not found for this image"}
+
+    try:
+        summarize_prompt = build_ar_summarize_prompt(lang_code, context_text)
+        gemini_response = await MODEL.generate_content_async(summarize_prompt)
+        ai_text = gemini_response.text.strip()
+
+        tts_lang, tts_voice = get_voice_params_from_code(lang_code)
+        tts_request = texttospeech.SynthesizeSpeechRequest(
+            input=texttospeech.SynthesisInput(text=ai_text),
+            voice=texttospeech.VoiceSelectionParams(
+                language_code=tts_lang,
+                name=tts_voice
+            ),
+            audio_config=texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3
+            ),
+        )
+        tts_response = await asyncio.to_thread(TTS_CLIENT.synthesize_speech, request=tts_request)
+        audio_base64 = base64.b64encode(tts_response.audio_content).decode('utf-8')
+
+        return {"text": ai_text, "audio": audio_base64}
+
+    except Exception as e:
+        print(f"💥 AR 쿼리 처리 오류: {e}")
+        return {"error": str(e)}
+
+
+# ──────────────────────────────────────────────────────────────
+# WebSocket  (챗봇 — 언어는 질문 텍스트로 자동감지, 기존 방식 유지)
+# ──────────────────────────────────────────────────────────────
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    print("✅ WebSocket 연결 성공")
+
+    if INITIALIZATION_ERROR:
+        await websocket.send_json({"type": "error", "data": f"서버 초기화 실패: {INITIALIZATION_ERROR}"})
+        await websocket.close()
+        return
+
+    client_id = f"{websocket.client.host}:{websocket.client.port}"
+    print(f"✅ 클라이언트 연결됨: {client_id}")
+
+    try:
+        while True:
+            print(f"⏳ ({client_id}) 메시지 수신 대기 중...")
+            raw_data = await websocket.receive_json()
+            message_type = raw_data.get("type")
+            user_input   = raw_data.get("data")
+            user_text    = ""
+
+            if message_type == "audio":
+                print(f"🎤 ({client_id}) 오디오 처리 시작")
+                audio_bytes = base64.b64decode(user_input)
+                stt_request = speech.RecognizeRequest(
+                    config=speech.RecognitionConfig(
+                        encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
+                        sample_rate_hertz=SAMPLE_RATE,
+                        language_code="ko-KR",
+                        alternative_language_codes=["en-US", "ja-JP", "cmn-Hans-CN"]
+                    ),
+                    audio=speech.RecognitionAudio(content=audio_bytes)
+                )
+                stt_response = await asyncio.to_thread(STT_CLIENT.recognize, request=stt_request)
+                user_text = (
+                    stt_response.results[0].alternatives[0].transcript
+                    if stt_response.results else ""
+                )
+                if user_text:
+                    print(f"🗣️ ({client_id}) STT 결과: {user_text}")
+                    await websocket.send_json({"type": "user_text", "data": user_text})
+
+            elif message_type == "text":
+                user_text = user_input
+                print(f"⌨️ ({client_id}) 텍스트 입력: {user_text}")
+
+            if not user_text:
+                continue
+
+            print(f"👤 사용자 ({client_id}): {user_text}")
+
+            if "이제 그만" in user_text.strip():
+                await websocket.send_json({"type": "ai_text", "data": "챗봇을 종료합니다. 이용해주셔서 감사합니다."})
+                break
+
+            # 이미지 표시 의도 판단
+            image_keywords = ["보여줘", "사진", "그림", "이미지", "생김새", "모습"]
+            show_image_intent = any(kw in user_text for kw in image_keywords)
+
+            # 키워드 기반 페이지 검색
+            keywords = re.findall(r'[\w가-힣]{2,}', user_text)
+            best_match = {"score": 0, "page_data": None}
+            for page in PDF_CONTENT:
+                score = sum(1 for kw in keywords if kw.lower() in page["text"].lower())
+                if score > best_match["score"]:
+                    best_match["score"] = score
+                    best_match["page_data"] = page
+
+            context_text = KNOWLEDGE_CONTEXT  # 기본: 전체 컨텍스트
+            if best_match["page_data"]:
+                context_text = best_match["page_data"]["text"]
+                print(f"✅ ({client_id}) 컨텍스트: 페이지 {best_match['page_data']['page']}")
+            else:
+                print(f"⚠️ ({client_id}) 매칭 실패. 전체 컨텍스트 사용.")
+
+            # Gemini 응답 생성
+            # WebSocket 채팅은 MODEL의 system_instruction(언어 자동감지)을 그대로 활용
+            prompt = f"""
+            당신은 전문 박물관 도슨트입니다.
+
+            [중요 규칙]
+            1. "제공된 정보에는...", "그림 3은..." 과 같이 상황 설명이나 이미지 번호를 언급하지 마세요.
+            2. 인사말 없이 바로 설명으로 시작하세요.
+            3. 원본 텍스트에 없는 내용은 지어내지 마세요.
+
+            --- 컨텍스트 ---
+            {context_text}
+
+            --- 질문 ---
+            {user_text}
+            """
+            print(f"🤖 ({client_id}) Gemini 요청 전송...")
+            gemini_response = await MODEL.generate_content_async(prompt)
+            ai_text = gemini_response.text.strip()
+            print(f"🤖 ({client_id}) Gemini 응답: {ai_text[:50]}...")
+
+            await websocket.send_json({"type": "ai_text", "data": ai_text})
+
+            # 이미지 전송
+            if show_image_intent and best_match["page_data"] and best_match["page_data"]["images"]:
+                image_url = f"/static/images/{best_match['page_data']['images'][0]}"
+                print(f"🖼️ 이미지 전송: {image_url}")
+                await websocket.send_json({"type": "ai_image", "data": {"url": image_url}})
+
+            # TTS — 응답 텍스트 언어 자동감지 (챗봇은 질문 언어를 따라가므로)
+            try:
+                from langdetect import detect
+                detected_lang = detect(ai_text)
+            except Exception:
+                detected_lang = DEFAULT_LANG
+
+            tts_lang, tts_voice = get_voice_params_from_code(detected_lang)
+            print(f"🔊 ({client_id}) TTS 언어: {detected_lang} → {tts_lang}")
+
+            tts_request = texttospeech.SynthesizeSpeechRequest(
+                input=texttospeech.SynthesisInput(text=ai_text),
+                voice=texttospeech.VoiceSelectionParams(
+                    language_code=tts_lang,
+                    name=tts_voice
+                ),
+                audio_config=texttospeech.AudioConfig(
+                    audio_encoding=texttospeech.AudioEncoding.MP3
+                )
+            )
+            tts_response = await asyncio.to_thread(TTS_CLIENT.synthesize_speech, request=tts_request)
+            if tts_response.audio_content:
+                print(f"🔊 ({client_id}) TTS 오디오 전송")
+                await websocket.send_bytes(tts_response.audio_content)
+            else:
+                print(f"❌ ({client_id}) TTS 오디오 생성 실패")
+
+    except WebSocketDisconnect:
+        print(f"🔌 클라이언트 연결 끊어짐: {client_id}")
+    except Exception as e:
+        print(f"💥 처리 중 오류 ({client_id}): {e}")
+    finally:
+        print(f"🏁 웹소켓 세션 종료: {client_id}")
