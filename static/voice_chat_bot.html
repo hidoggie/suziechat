@@ -288,6 +288,13 @@ function addMessage(type, data) {
   const p = document.createElement('p');
   if (type === 'ai_image') {
     wrap.innerHTML = `<img src="${data.url}" alt="AI image" style="max-width:80%;border-radius:12px;">`;
+  } else if (type === 'ai_text') {
+    // \n\n → 문단 구분, \n → 줄바꿈으로 변환 (TTS용 텍스트에 HTML 적용)
+    const escaped = data.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    p.innerHTML = escaped
+      .replace(/\n\n+/g, '<br><br>')
+      .replace(/\n/g, '<br>');
+    wrap.appendChild(p);
   } else {
     p.textContent = data;
     wrap.appendChild(p);
