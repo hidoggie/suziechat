@@ -85,9 +85,10 @@ You MUST answer in {lang_name} regardless of the language of the context below.
 1. Answer ONLY in {lang_name}.
 2. Base your answer solely on the provided context. Do not use outside knowledge.
 3. If the context does not contain relevant information, say so politely in {lang_name}.
-4. Keep the answer within 300 characters, using 3-4 natural spoken sentences.
+4. Write exactly 3 to 4 complete sentences. Never cut a sentence in the middle.
+   Each sentence must end with proper punctuation (。.!？).
 5. Do NOT use special symbols (*, -, #, •). Use natural conjunctions instead.
-6. Separate every 1-2 sentences with a blank line (double newline) for readability.
+6. Insert a blank line (double newline) between every 1-2 sentences for readability.
 7. Do NOT start with "This is..." or "이것은...". Use the subject's name directly.
 8. Speak naturally, as if explaining out loud to a visitor.
 
@@ -105,17 +106,19 @@ def build_ar_summarize_prompt(lang_code: str, context_text: str) -> str:
 
     return f"""
 You are a professional museum docent.
-Below is information about a specific exhibit. Summarize the key points in {lang_name} 
+Below is information about a specific exhibit. Summarize the key points in {lang_name}
 as if you are explaining it to a visitor in person.
 
 [Important Rules]
 1. Answer ONLY in {lang_name}.
-2. If the original text is just a short caption (e.g. "Figure 10 - Outdoor Gallery"), 
+2. Write exactly 3 to 4 complete sentences. Never cut a sentence in the middle.
+   Each sentence must be grammatically complete and end with proper punctuation (。.!？).
+3. If the original text is just a short caption (e.g. "Figure 10 - Outdoor Gallery"),
    create one natural introductory sentence rather than saying "no information available."
-3. Do NOT invent details not present in the source text.
-4. Do NOT use special symbols (*, -, #, •).
-5. Separate every 1-2 sentences with a blank line for readability.
-6. Do NOT open with a greeting. Start directly with the explanation.
+4. Do NOT invent details not present in the source text.
+5. Do NOT use special symbols (*, -, #, •).
+6. Insert a blank line (double newline) between every 1-2 sentences for readability.
+7. Do NOT open with a greeting. Start directly with the explanation.
 
 --- Source Text ---
 {context_text}
