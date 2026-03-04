@@ -282,25 +282,63 @@ const recognizedText= document.getElementById('recognizedText');
 ────────────────────────────────────────── */
 function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream; }
 
+/* 스트리밍 중인 AI 말풍선 요소 추적 */
+let streamingBubble = null;   // 현재 이어 붙이는 중인 <p> 요소
+let streamingRaw    = '';     // 누적된 원본 텍스트 (줄바꿈 변환 전)
+
+function renderAiBubbleText(p, rawText) {
+  /* \n\n → 문단 간격, \n → 줄바꿈. XSS 방지 이스케이프 포함 */
+  const escaped = rawText
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  p.innerHTML = escaped
+    .replace(/\n\n+/g, '<br><br>')
+    .replace(/\n/g, '<br>');
+}
+
 function addMessage(type, data) {
+  if (type === 'ai_text') {
+    /* ── 스트리밍 조각: 기존 말풍선에 이어 붙이기 ── */
+    if (!streamingBubble) {
+      // 첫 조각 → 새 말풍선 생성
+      const wrap = document.createElement('div');
+      wrap.className = 'message ai';
+      const p = document.createElement('p');
+      wrap.appendChild(p);
+      transcriptDiv.appendChild(wrap);
+      streamingBubble = p;
+      streamingRaw = '';
+    }
+    streamingRaw += data;
+    renderAiBubbleText(streamingBubble, streamingRaw);
+    streamingBubble.closest('.message').scrollIntoView({ behavior: 'smooth', block: 'end' });
+    return;
+  }
+
+  /* ── ai_text 이외 메시지 → 스트리밍 종료 처리 후 새 말풍선 ── */
+  if (type === 'ai_done' || type === 'ai_end') {
+    // 서버가 완료 신호를 별도 타입으로 보내는 경우
+    streamingBubble = null;
+    streamingRaw = '';
+    return;
+  }
+
+  // 새 메시지가 오면 스트리밍 상태 초기화
+  streamingBubble = null;
+  streamingRaw = '';
+
   const wrap = document.createElement('div');
-  wrap.className = 'message ' + (type === 'user_text' ? 'user_text' : type === 'ai_text' ? 'ai' : 'system');
-  const p = document.createElement('p');
+  wrap.className = 'message ' + (type === 'user_text' ? 'user_text' : 'system');
+
   if (type === 'ai_image') {
     wrap.innerHTML = `<img src="${data.url}" alt="AI image" style="max-width:80%;border-radius:12px;">`;
-  } else if (type === 'ai_text') {
-    // \n\n → 문단 구분, \n → 줄바꿈으로 변환 (TTS용 텍스트에 HTML 적용)
-    const escaped = data.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    p.innerHTML = escaped
-      .replace(/\n\n+/g, '<br><br>')
-      .replace(/\n/g, '<br>');
-    wrap.appendChild(p);
   } else {
+    const p = document.createElement('p');
     p.textContent = data;
     wrap.appendChild(p);
   }
   transcriptDiv.appendChild(wrap);
-  // 새 메시지가 뷰포트 밖에 있어도 항상 부드럽게 스크롤
   wrap.scrollIntoView({ behavior: 'smooth', block: 'end' });
 }
 
@@ -414,7 +452,9 @@ function connectWebSocket() {
 
   socket.onmessage = async (event) => {
     if (event.data instanceof Blob) {
-      // 오디오 응답
+      // 오디오 도착 = AI 답변 텍스트 스트리밍 완료 → 말풍선 확정
+      streamingBubble = null;
+      streamingRaw = '';
       const audioBlob = event.data;
       setInputsEnabled(true);
       if (lastInputWasVoice && !isIOS()) {
