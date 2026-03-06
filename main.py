@@ -320,6 +320,14 @@ def find_best_page_by_vector(query_text: str):
 
 # --- 5. FastAPI 엔드포인트 ---
 BASE_DIR = Path(__file__).resolve().parent
+@app.get("/health")
+async def health_check():
+    if INITIALIZATION_ERROR:
+        raise HTTPException(status_code=503, detail=INITIALIZATION_ERROR)
+    if MODEL is None:
+        raise HTTPException(status_code=503, detail="Still initializing...")
+    return {"status": "ok"}
+
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
