@@ -540,8 +540,6 @@ async function startVoiceInput() {
   waveAnim.classList.remove('hidden');
   voiceModal.classList.remove('hidden');
 
-  // ── MediaRecorder로 오디오 녹음 → 서버 Google STT로 전송 ──
-  // (Web Speech API 대신 서버 STT를 사용하여 다국어 자동 감지)
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const options = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -557,23 +555,48 @@ async function startVoiceInput() {
       stream.getTracks().forEach(t => t.stop());
       if (audioChunks.length === 0) return;
       const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-      // 오디오를 base64로 변환 후 서버로 전송하여 Google STT 처리
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64Audio = reader.result.split(',')[1];
-        // 녹음된 오디오를 서버로 전송 (서버가 Google STT로 언어 자동 감지)
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: 'audio', data: base64Audio }));
           voiceModal.classList.add('hidden');
           setInputsEnabled(false);
-          showVoiceText('서버에서 음성 인식 중...');
         }
       };
       reader.readAsDataURL(blob);
     };
 
     mediaRecorder.start();
-    showVoiceText('🎙️ 말씀해주세요... (버튼을 눌러 전송)');
+
+    // ── Web Speech API: 말하는 동안 실시간 텍스트 미리보기 (화면 표시용) ──
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.lang = 'ko-KR';  // 미리보기용 (실제 언어 감지는 서버 Google STT)
+      recognition.interimResults = true;
+      recognition.continuous = true;
+
+      recognition.onresult = (e) => {
+        let interim = '', final = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += t;
+          else interim += t;
+        }
+        const preview = final || interim;
+        if (preview) showVoiceText(preview);
+      };
+
+      recognition.onerror = () => {
+        // 미리보기 오류는 무시 (실제 처리는 서버가 함)
+      };
+
+      try { recognition.start(); } catch(e) {}
+    } else {
+      showVoiceText('🎙️ 말씀해주세요... (버튼을 눌러 전송)');
+    }
+
     sendVoiceBtn.disabled = false;
 
   } catch (err) {
@@ -589,6 +612,7 @@ function showVoiceText(text) {
 }
 
 function cancelVoiceInput() {
+  if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
   if (mediaRecorder && mediaRecorder.state === 'recording') {
     mediaRecorder.stop();
     mediaRecorder = null;
@@ -600,6 +624,7 @@ function cancelVoiceInput() {
 
 function sendVoiceInput() {
   lastInputWasVoice = true;
+  if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
   // MediaRecorder 정지 → onstop에서 서버로 오디오 전송
   if (mediaRecorder && mediaRecorder.state === 'recording') {
     mediaRecorder.stop();
