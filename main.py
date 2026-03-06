@@ -25,7 +25,7 @@ from langdetect import detect
 KNOWLEDGE_PDF_PATH = "knowledge.pdf"
 IMAGES_DIR = Path(__file__).resolve().parent / "static" / "images"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MAX_OUTPUT_TOKENS = 1500
+MAX_OUTPUT_TOKENS = 3000
 STT_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-412b0459f610.json"
 TTS_CREDENTIALS_PATH = "/etc/secrets/voice-chat-462608-e445e48514e2.json"
 SAMPLE_RATE = 48000
@@ -650,20 +650,27 @@ async def websocket_endpoint(websocket: WebSocket):
             image_keywords = ["보여줘", "사진", "그림", "이미지", "생김새", "모습"]
             show_image_intent = any(kw in user_text for kw in image_keywords)
 
-            # 키워드 기반 페이지 검색
-            keywords = re.findall(r'[\w가-힣]{2,}', user_text)
-            best_match = {"score": 0, "page_data": None}
-            for page in PDF_CONTENT:
-                score = sum(1 for kw in keywords if kw.lower() in page["text"].lower())
-                if score > best_match["score"]:
-                    best_match["score"] = score
-                    best_match["page_data"] = page
+            # ── 1순위: 벡터 검색 (의미 기반 — "karma" → "업경대" 매칭 가능) ──
+            matched_page = find_best_page_by_vector(user_text)
+
+            # ── 2순위: 벡터 실패 시 키워드 검색으로 폴백 ──
+            if not matched_page:
+                keywords = re.findall(r'[\w가-힣]{2,}', user_text)
+                best_kw = {"score": 0, "page_data": None}
+                for page in PDF_CONTENT:
+                    score = sum(1 for kw in keywords if kw.lower() in page["text"].lower())
+                    if score > best_kw["score"]:
+                        best_kw["score"] = score
+                        best_kw["page_data"] = page
+                matched_page = best_kw["page_data"] if best_kw["score"] > 0 else None
 
             context_text = KNOWLEDGE_CONTEXT  # 기본: 전체 컨텍스트
-            if best_match["page_data"]:
-                context_text = best_match["page_data"]["text"]
-                print(f"✅ ({client_id}) 컨텍스트: 페이지 {best_match['page_data']['page']}")
+            if matched_page:
+                context_text = matched_page["text"]
+                best_match = {"page_data": matched_page}
+                print(f"✅ ({client_id}) 컨텍스트: 페이지 {matched_page['page']}")
             else:
+                best_match = {"page_data": None}
                 print(f"⚠️ ({client_id}) 매칭 실패. 전체 컨텍스트 사용.")
 
             # ── Gemini 응답 생성 — 감지된 언어로 명시적 프롬프트 빌드 ──
