@@ -3,15 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <title>음성 챗봇 - 도슨트봇</title>    
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <style>
-    body {
+    html, body {
       font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      height: 100%;
+      height: 100dvh;
+      overflow: hidden;
     }
 
     /* ── 채팅 말풍선 ── */
@@ -82,7 +85,7 @@
 </head>
 <body>
 
-<div id="chatbot-view" class="min-h-screen bg-gradient-to-b from-sky-100 to-blue-100 flex flex-col">
+<div id="chatbot-view" class="bg-gradient-to-b from-sky-100 to-blue-100 flex flex-col" style="height:100vh; height:100dvh; overflow:hidden;">
 
   <!-- ── Header ── -->
   <header class="bg-gradient-to-r from-sky-500 to-blue-500 text-white p-4 flex items-center gap-3 shadow-md">
@@ -116,7 +119,7 @@
   </header>
 
   <!-- ── Chat transcript ── -->
-  <main id="transcript" class="flex-1 overflow-y-auto p-4 space-y-2"></main>
+  <main id="transcript" class="flex-1 overflow-y-auto p-4 space-y-2" style="overscroll-behavior: contain; -webkit-overflow-scrolling: touch;"></main>
 
   <!-- ══════════════════════════════════════
        Voice Input Modal
@@ -187,7 +190,7 @@
   </div>
 
   <!-- ── Footer / Input area ── -->
-  <footer class="bg-white flex items-center gap-2 border-t px-3 py-2">
+  <footer class="bg-white flex items-center gap-2 border-t px-3 py-2 flex-shrink-0" style="padding-bottom: max(8px, env(safe-area-inset-bottom));">
 
     <!-- 마이크 버튼 -->
     <button
