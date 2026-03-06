@@ -229,20 +229,24 @@ async def lifespan(app: FastAPI):
 
             3. 답변이 길어질 경우, 가장 중요한 정보부터 순서대로, 최대 3~4개의 문장으로 정리해주세요.
 
+            4.  지식 베이스의 내용이 한국어로 되어 있더라도,  반드시 사용자가 질문한 언어로 번역하여 답변하세요.
+                 Even if the knowledge base is in Korean, ALWAYS translate and respond in the user's language.
+                 知識ベースが韓国語であっても、必ずユーザーの言語に翻訳して回答してください。
+
             🗣️ [가독성 및 TTS 최적화 규칙 - 매우 중요!]
 
-            4. [단락 강제 분리] 1~2문장이 끝날 때마다 반드시 실제 줄바꿈(엔터)을 두 번 적용하여 문단을 나누세요.
+            5. [단락 강제 분리] 1~2문장이 끝날 때마다 반드시 실제 줄바꿈(엔터)을 두 번 적용하여 문단을 나누세요.
                (주의: '<줄바꿈>' 같은 지시어 글자를 절대 텍스트로 적지 마세요!)
 
-            5. 특수기호 사용 금지: 별표(*), 대시(-), 글머리 기호(•), 샵(#) 등의 특수기호는 절대 사용하지 마세요.
+            6. 특수기호 사용 금지: 별표(*), 대시(-), 글머리 기호(•), 샵(#) 등의 특수기호는 절대 사용하지 마세요.
 
-            6. 여러 항목을 나열할 때는 "첫째,", "둘째,", "마지막으로," 또는 "먼저,", "또한," 같은 자연스러운 접속사를 사용하세요.
+            7. 여러 항목을 나열할 때는 "첫째,", "둘째,", "마지막으로," 또는 "먼저,", "또한," 같은 자연스러운 접속사를 사용하세요.
                In English, use natural connectors like "First,", "Additionally,", "Finally,".
               日本語では「まず、」「また、」「最後に、」などの自然な接続詞を使ってください。
 
-            7. 관람객이 귀로 들었을 때 편안하도록, 안내원이 직접 말로 설명해 주듯 부드럽고 자연스러운 구어체 문장으로 작성하세요.
+            8. 관람객이 귀로 들었을 때 편안하도록, 안내원이 직접 말로 설명해 주듯 부드럽고 자연스러운 구어체 문장으로 작성하세요.
 
-            8. [지시어 사용 금지] "이것은 ~입니다" 또는 "이 작품은 ~입니다" 같은 지시어로 시작하지 마세요.
+            9. [지시어 사용 금지] "이것은 ~입니다" 또는 "이 작품은 ~입니다" 같은 지시어로 시작하지 마세요.
                반드시 질문자가 물어본 '대상의 이름'을 주어로 직접 사용하여 자연스럽게 시작하세요.
                Never start with "This is ~". Always use the name of the subject directly.
                「これは～です」で始めず、必ず対象の名前を主語として使ってください。
@@ -550,6 +554,18 @@ async def websocket_endpoint(websocket: WebSocket):
     client_id = f"{websocket.client.host}:{websocket.client.port}"
     print(f"✅ 클라이언트 연결됨: {client_id}")
 
+    # ── Heartbeat: 30초마다 ping을 보내 모바일 백그라운드 연결 유지 ──
+    async def heartbeat():
+        try:
+            while True:
+                await asyncio.sleep(30)
+                await websocket.send_json({"type": "ping"})
+                print(f"💓 ({client_id}) heartbeat ping 전송")
+        except Exception:
+            pass  # 연결 끊기면 자동 종료
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+
     try:
         while True:
             print(f"⏳ ({client_id}) 메시지 수신 대기 중...")
@@ -557,6 +573,11 @@ async def websocket_endpoint(websocket: WebSocket):
             message_type = raw_data.get("type")
             user_input   = raw_data.get("data")
             user_text    = ""
+
+            # ── 클라이언트 pong 응답 무시 ──
+            if message_type == "pong":
+                print(f"💓 ({client_id}) pong 수신")
+                continue
 
             if message_type == "audio":
                 print(f"🎤 ({client_id}) 오디오 처리 시작")
@@ -592,6 +613,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({"type": "ai_text", "data": "챗봇을 종료합니다. 이용해주셔서 감사합니다."})
                 break
 
+            # ── 질문 언어 감지 (STT 결과 or 텍스트 입력 모두 적용) ──
+            try:
+                detected_lang = detect(user_text)
+                # langdetect 가 지원하지 않는 코드면 기본값으로
+                if detected_lang not in LANG_CONFIG:
+                    detected_lang = DEFAULT_LANG
+            except Exception:
+                detected_lang = DEFAULT_LANG
+            print(f"🌐 ({client_id}) 감지된 질문 언어: {detected_lang}")
+
             # 이미지 표시 의도 판단
             image_keywords = ["보여줘", "사진", "그림", "이미지", "생김새", "모습"]
             show_image_intent = any(kw in user_text for kw in image_keywords)
@@ -612,22 +643,9 @@ async def websocket_endpoint(websocket: WebSocket):
             else:
                 print(f"⚠️ ({client_id}) 매칭 실패. 전체 컨텍스트 사용.")
 
-            # Gemini 응답 생성
-            # system_instruction 의 "질문 언어로 답변" 규칙이 동작하도록
-            # prompt 는 언어 지시 없이 컨텍스트와 질문만 전달
-            prompt = f"""
-[Rules]
-- Do NOT mention image numbers, figure numbers, or meta-information about the source.
-- Do NOT open with a greeting.
-- Do NOT fabricate information not present in the context.
-
---- Context ---
-{context_text}
-
---- Question ---
-{user_text}
-"""
-            print(f"🤖 ({client_id}) Gemini 요청 전송...")
+            # ── Gemini 응답 생성 — 감지된 언어로 명시적 프롬프트 빌드 ──
+            prompt = build_docent_prompt(detected_lang, context_text, user_text)
+            print(f"🤖 ({client_id}) Gemini 요청 전송... (언어: {detected_lang})")
             gemini_response = await MODEL.generate_content_async(prompt)
             ai_text = gemini_response.text.strip()
             print(f"🤖 ({client_id}) Gemini 응답: {ai_text[:50]}...")
@@ -640,12 +658,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"🖼️ 이미지 전송: {image_url}")
                 await websocket.send_json({"type": "ai_image", "data": {"url": image_url}})
 
-            # TTS — AI 응답 텍스트 언어 자동감지
-            try:
-                detected_lang = detect(ai_text)
-            except Exception:
-                detected_lang = DEFAULT_LANG
-
+            # ── TTS — 질문 감지 언어 그대로 사용 (AI 응답 재감지 불필요) ──
             tts_lang, tts_voice = get_voice_params_from_code(detected_lang)
             print(f"🔊 ({client_id}) TTS 언어: {detected_lang} → {tts_lang}")
 
@@ -671,4 +684,5 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"💥 처리 중 오류 ({client_id}): {e}")
     finally:
+        heartbeat_task.cancel()
         print(f"🏁 웹소켓 세션 종료: {client_id}")
