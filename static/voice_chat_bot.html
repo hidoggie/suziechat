@@ -122,6 +122,39 @@
   <main id="transcript" class="flex-1 overflow-y-auto p-4 space-y-2" style="overscroll-behavior: contain; -webkit-overflow-scrolling: touch;"></main>
 
   <!-- ══════════════════════════════════════
+       언어 선택 모달 (음성 입력 전)
+  ══════════════════════════════════════ -->
+  <div id="langModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
+    <div class="bg-white rounded-3xl p-8 mx-6 w-full max-w-sm shadow-2xl">
+      <div class="flex justify-end mb-2">
+        <button onclick="closeLangModal()" class="text-gray-400 hover:text-gray-600">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="flex flex-col items-center">
+        <h3 class="text-xl font-bold text-gray-800 mb-2">언어를 선택해주세요</h3>
+        <p class="text-sm text-gray-500 mb-6 text-center">Select your language / 言語を選択してください</p>
+        <div class="flex flex-col gap-3 w-full">
+          <button onclick="selectLang('ko-KR', '한국어')"
+            class="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-sky-500 text-white text-lg font-semibold shadow hover:opacity-90 transition">
+            🇰🇷 한국어
+          </button>
+          <button onclick="selectLang('en-US', 'English')"
+            class="w-full py-4 rounded-2xl bg-gradient-to-r from-indigo-500 to-blue-500 text-white text-lg font-semibold shadow hover:opacity-90 transition">
+            🇺🇸 English
+          </button>
+          <button onclick="selectLang('ja-JP', '日本語')"
+            class="w-full py-4 rounded-2xl bg-gradient-to-r from-red-500 to-pink-500 text-white text-lg font-semibold shadow hover:opacity-90 transition">
+            🇯🇵 日本語
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
        Voice Input Modal
   ══════════════════════════════════════ -->
   <div id="voiceModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
@@ -154,13 +187,15 @@
           </div>
         </div>
 
+        <!-- 선택된 언어 표시 -->
+        <div id="selectedLangBadge" class="mb-2 px-4 py-1 rounded-full bg-blue-100 text-blue-700 text-sm font-semibold"></div>
+
         <h3 class="text-xl font-bold text-gray-800 mb-1">음성 입력 중...</h3>
         <p class="text-sm text-gray-500 mb-4 text-center">질문을 말씀해주세요</p>
 
         <!-- 실시간 음성 텍스트 표시 영역 -->
         <div id="voiceInputText"
           class="w-full min-h-[80px] bg-gray-50 rounded-2xl p-4 mb-6 border-2 border-gray-200 flex items-center justify-center transition-all">
-          <!-- 기본: 파형 애니메이션 -->
           <div id="waveAnim" class="flex items-center gap-1">
             <div class="wave-bar"></div>
             <div class="wave-bar"></div>
@@ -168,7 +203,6 @@
             <div class="wave-bar"></div>
             <div class="wave-bar"></div>
           </div>
-          <!-- 인식된 텍스트 (숨김 상태로 시작) -->
           <p id="recognizedText" class="text-gray-800 text-center hidden"></p>
         </div>
 
@@ -258,6 +292,8 @@ let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
 let lastInputWasVoice = false;
+let selectedLang = 'ko-KR';      // 선택된 언어 코드
+let selectedLangName = '한국어';  // 선택된 언어 이름
 
 let audioContext = null;
 let currentAudioSource = null;   // BufferSource (재생 중인 오디오)
@@ -531,78 +567,71 @@ function demoResponse(userText) {
 /* ──────────────────────────────────────────
    음성 입력 모달
 ────────────────────────────────────────── */
-async function startVoiceInput() {
+// 마이크 버튼 클릭 → 언어 선택 모달 열기
+function startVoiceInput() {
+  document.getElementById('langModal').classList.remove('hidden');
+}
+
+function closeLangModal() {
+  document.getElementById('langModal').classList.add('hidden');
+}
+
+// 언어 선택 후 음성 인식 시작
+function selectLang(langCode, langName) {
+  selectedLang = langCode;
+  selectedLangName = langName;
+  closeLangModal();
+  openVoiceModal();
+}
+
+function openVoiceModal() {
   voiceText = '';
-  audioChunks = [];
   sendVoiceBtn.disabled = true;
   recognizedText.textContent = '';
   recognizedText.classList.add('hidden');
   waveAnim.classList.remove('hidden');
   voiceModal.classList.remove('hidden');
 
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const options = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? { mimeType: 'audio/webm;codecs=opus' }
-      : {};
-    mediaRecorder = new MediaRecorder(stream, options);
+  // 선택된 언어 배지 표시
+  const badge = document.getElementById('selectedLangBadge');
+  badge.textContent = selectedLangName;
 
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      if (audioChunks.length === 0) return;
-      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64Audio = reader.result.split(',')[1];
-        if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: 'audio', data: base64Audio }));
-          voiceModal.classList.add('hidden');
-          setInputsEnabled(false);
-        }
-      };
-      reader.readAsDataURL(blob);
-    };
-
-    mediaRecorder.start();
-
-    // ── Web Speech API: 말하는 동안 실시간 텍스트 미리보기 (화면 표시용) ──
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognition = new SpeechRecognition();
-      recognition.lang = 'ko-KR';  // 미리보기용 (실제 언어 감지는 서버 Google STT)
-      recognition.interimResults = true;
-      recognition.continuous = true;
-
-      recognition.onresult = (e) => {
-        let interim = '', final = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const t = e.results[i][0].transcript;
-          if (e.results[i].isFinal) final += t;
-          else interim += t;
-        }
-        const preview = final || interim;
-        if (preview) showVoiceText(preview);
-      };
-
-      recognition.onerror = () => {
-        // 미리보기 오류는 무시 (실제 처리는 서버가 함)
-      };
-
-      try { recognition.start(); } catch(e) {}
-    } else {
-      showVoiceText('🎙️ 말씀해주세요... (버튼을 눌러 전송)');
-    }
-
-    sendVoiceBtn.disabled = false;
-
-  } catch (err) {
-    console.error('마이크 접근 오류:', err);
-    showVoiceText('마이크 접근 권한이 필요합니다.');
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    showVoiceText('이 브라우저는 음성 인식을 지원하지 않습니다.');
+    return;
   }
+
+  recognition = new SpeechRecognition();
+  recognition.lang = selectedLang;     // ← 선택된 언어로 STT 인식
+  recognition.interimResults = true;
+  recognition.continuous = false;
+
+  recognition.onresult = (e) => {
+    let interim = '', final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += t;
+      else interim += t;
+    }
+    voiceText = final || interim;
+    // 실시간 텍스트 미리보기
+    showVoiceText(voiceText);
+    if (final) sendVoiceBtn.disabled = false;
+  };
+
+  recognition.onend = () => {
+    if (voiceText) sendVoiceBtn.disabled = false;
+  };
+
+  recognition.onerror = (e) => {
+    console.warn('음성 인식 오류:', e.error);
+    if (e.error !== 'no-speech') {
+      showVoiceText('인식 오류. 다시 시도해주세요. / Recognition error. Please try again.');
+    }
+  };
+
+  recognition.start();
 }
 
 function showVoiceText(text) {
@@ -613,23 +642,27 @@ function showVoiceText(text) {
 
 function cancelVoiceInput() {
   if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
-    mediaRecorder = null;
-  }
-  audioChunks = [];
   voiceText = '';
   voiceModal.classList.add('hidden');
 }
 
 function sendVoiceInput() {
-  lastInputWasVoice = true;
+  if (!voiceText.trim()) return;
   if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
-  // MediaRecorder 정지 → onstop에서 서버로 오디오 전송
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
+  voiceModal.classList.add('hidden');
+
+  lastInputWasVoice = true;
+  addMessage('user_text', voiceText);
+
+  // 텍스트로 전송 → 서버에서 langdetect로 언어 감지 후 답변
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'text', data: voiceText }));
+    setInputsEnabled(false);
+  } else {
+    demoResponse(voiceText);
   }
-  sendVoiceBtn.disabled = true;
+
+  voiceText = '';
 }
 
 /* ──────────────────────────────────────────
