@@ -294,6 +294,9 @@ let isRecording = false;
 let lastInputWasVoice = false;
 let selectedLang = 'ko-KR';      // 선택된 언어 코드
 let selectedLangName = '한국어';  // 선택된 언어 이름
+let reconnectTimer = null;        // 재연결 타이머 (중복 방지)
+let reconnectCount = 0;           // 재연결 시도 횟수
+const MAX_RECONNECT = 5;          // 최대 재연결 횟수
 
 let audioContext = null;
 let currentAudioSource = null;   // BufferSource (재생 중인 오디오)
@@ -429,12 +432,17 @@ async function playFromOffset(offset) {
 
   currentAudioSource = audioContext.createBufferSource();
   currentAudioSource.buffer = currentAudioBuffer;
-  currentAudioSource.connect(audioContext.destination);
+
+  // ── 음량 GainNode: iOS 음량 작은 문제 개선 ──
+  const gainNode = audioContext.createGain();
+  gainNode.gain.value = 2.0;  // 기본 볼륨 2배 증폭
+  currentAudioSource.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+
   currentAudioSource.start(0, offset);
   audioStartedAt = audioContext.currentTime - offset;
 
   currentAudioSource.onended = () => {
-    // 자연 종료
     audioPlaybackOffset = 0;
     currentAudioSource = null;
     setPlayState(false);
@@ -488,22 +496,39 @@ function connectWebSocket() {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   socket = new WebSocket(`${proto}//${window.location.host}/ws`);
 
+  // ── 연결 성공 ──
   socket.onopen = () => {
+    reconnectCount = 0;
+    reconnectTimer = null;
     setInputsEnabled(true);
     addMessage('system', '챗봇이 준비되었습니다.');
   };
 
+  // ── 메시지 수신 ──
   socket.onmessage = async (event) => {
     if (event.data instanceof Blob) {
-      // 오디오 도착 = AI 답변 텍스트 스트리밍 완료 → 말풍선 확정
       streamingBubble = null;
       streamingRaw = '';
       const audioBlob = event.data;
       setInputsEnabled(true);
-      if (lastInputWasVoice && !isIOS()) {
-        await playReceivedAudio(audioBlob);
+      if (lastInputWasVoice) {
+        // iOS/Android 모두 시도, 실패 시 play 버튼으로 유도
+        try {
+          await playReceivedAudio(audioBlob);
+        } catch(e) {
+          // iOS 자동재생 차단 시 버퍼만 저장
+          await ensureAudioContext();
+          const arrayBuffer = await audioBlob.arrayBuffer();
+          currentAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+          audioPlaybackOffset = 0;
+          setPlayState(false);
+          // iOS에서 자동재생 안 될 때 play 버튼 강조
+          if (isIOS()) {
+            playBtn.classList.add('animate-bounce');
+            setTimeout(() => playBtn.classList.remove('animate-bounce'), 3000);
+          }
+        }
       } else {
-        // 받아두기만 하고 play 버튼으로 재생
         await ensureAudioContext();
         const arrayBuffer = await audioBlob.arrayBuffer();
         currentAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
@@ -512,7 +537,6 @@ function connectWebSocket() {
       }
     } else {
       const msg = JSON.parse(event.data);
-      // ── 서버 heartbeat ping → pong 응답 ──
       if (msg.type === 'ping') {
         socket.send(JSON.stringify({ type: 'pong' }));
         return;
@@ -521,17 +545,24 @@ function connectWebSocket() {
     }
   };
 
+  // ── 연결 끊김 → 재연결 (횟수 제한, 중복 방지) ──
   socket.onclose = () => {
-    addMessage('system', '연결이 끊어졌습니다. 3초 후 재연결합니다...');
     setInputsEnabled(false);
-    // ── 자동 재연결 ──
-    setTimeout(() => {
+    if (reconnectTimer) return;  // 이미 타이머 있으면 중복 방지
+    if (reconnectCount >= MAX_RECONNECT) {
+      addMessage('system', '연결에 실패했습니다. 페이지를 새로고침 해주세요.');
+      return;
+    }
+    reconnectCount++;
+    const delay = Math.min(3000 * reconnectCount, 15000);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
       connectWebSocket();
-    }, 3000);
+    }, delay);
   };
 
   socket.onerror = () => {
-    console.warn('WebSocket 오류 발생');
+    console.warn('WebSocket 오류');
   };
 }
 
@@ -617,16 +648,23 @@ function openVoiceModal() {
     voiceText = final || interim;
     // 실시간 텍스트 미리보기
     showVoiceText(voiceText);
-    if (final) sendVoiceBtn.disabled = false;
+    // iOS는 isFinal이 늦게 오므로 interim 텍스트가 있어도 전송 버튼 활성화
+    if (voiceText.trim()) sendVoiceBtn.disabled = false;
   };
 
+  // onend: iOS에서 isFinal 없이 종료될 때 대비
   recognition.onend = () => {
-    if (voiceText) sendVoiceBtn.disabled = false;
+    if (voiceText && voiceText.trim()) {
+      sendVoiceBtn.disabled = false;
+    }
   };
 
   recognition.onerror = (e) => {
     console.warn('음성 인식 오류:', e.error);
-    if (e.error !== 'no-speech') {
+    // no-speech 오류 시에도 텍스트가 있으면 전송 버튼 활성화
+    if (voiceText && voiceText.trim()) {
+      sendVoiceBtn.disabled = false;
+    } else if (e.error !== 'no-speech') {
       showVoiceText('인식 오류. 다시 시도해주세요. / Recognition error. Please try again.');
     }
   };
