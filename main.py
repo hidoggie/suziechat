@@ -323,14 +323,6 @@ BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
-@app.get("/health")
-async def health_check():
-    if INITIALIZATION_ERROR:
-        raise HTTPException(status_code=503, detail=INITIALIZATION_ERROR)
-    if MODEL is None:
-        raise HTTPException(status_code=503, detail="Still initializing...")
-    return {"status": "ok"}
-
 @app.get("/", response_class=FileResponse)
 async def read_index():
     return FileResponse(BASE_DIR / "static" / "index.html")
@@ -587,6 +579,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"💓 ({client_id}) pong 수신")
                 continue
 
+            detected_lang = DEFAULT_LANG  # 언어 감지 결과 초기화
+
             if message_type == "audio":
                 print(f"🎤 ({client_id}) 오디오 처리 시작")
                 audio_bytes = base64.b64decode(user_input)
@@ -600,17 +594,40 @@ async def websocket_endpoint(websocket: WebSocket):
                     audio=speech.RecognitionAudio(content=audio_bytes)
                 )
                 stt_response = await asyncio.to_thread(STT_CLIENT.recognize, request=stt_request)
-                user_text = (
-                    stt_response.results[0].alternatives[0].transcript
-                    if stt_response.results else ""
-                )
-                if user_text:
+                if stt_response.results:
+                    best_result = stt_response.results[0]
+                    user_text = best_result.alternatives[0].transcript
+
+                    # ── STT가 직접 감지한 언어 코드 사용 (langdetect 보다 정확) ──
+                    stt_lang_code = getattr(best_result, "language_code", "")
+                    if stt_lang_code:
+                        stt_lang_short = stt_lang_code.split("-")[0].lower()  # "ja-JP" → "ja"
+                        detected_lang = stt_lang_short if stt_lang_short in LANG_CONFIG else DEFAULT_LANG
+                        print(f"🌐 ({client_id}) STT 감지 언어: {stt_lang_code} → {detected_lang}")
+                    else:
+                        # STT 언어 코드 없으면 langdetect 폴백
+                        try:
+                            detected_lang = detect(user_text)
+                            if detected_lang not in LANG_CONFIG:
+                                detected_lang = DEFAULT_LANG
+                        except Exception:
+                            detected_lang = DEFAULT_LANG
+                        print(f"🌐 ({client_id}) langdetect 폴백 언어: {detected_lang}")
+
                     print(f"🗣️ ({client_id}) STT 결과: {user_text}")
                     await websocket.send_json({"type": "user_text", "data": user_text})
 
             elif message_type == "text":
                 user_text = user_input
                 print(f"⌨️ ({client_id}) 텍스트 입력: {user_text}")
+                # ── 텍스트 입력은 langdetect 사용 ──
+                try:
+                    detected_lang = detect(user_text)
+                    if detected_lang not in LANG_CONFIG:
+                        detected_lang = DEFAULT_LANG
+                except Exception:
+                    detected_lang = DEFAULT_LANG
+                print(f"🌐 ({client_id}) 텍스트 감지 언어: {detected_lang}")
 
             if not user_text:
                 continue
@@ -620,16 +637,6 @@ async def websocket_endpoint(websocket: WebSocket):
             if "이제 그만" in user_text.strip():
                 await websocket.send_json({"type": "ai_text", "data": "챗봇을 종료합니다. 이용해주셔서 감사합니다."})
                 break
-
-            # ── 질문 언어 감지 (STT 결과 or 텍스트 입력 모두 적용) ──
-            try:
-                detected_lang = detect(user_text)
-                # langdetect 가 지원하지 않는 코드면 기본값으로
-                if detected_lang not in LANG_CONFIG:
-                    detected_lang = DEFAULT_LANG
-            except Exception:
-                detected_lang = DEFAULT_LANG
-            print(f"🌐 ({client_id}) 감지된 질문 언어: {detected_lang}")
 
             # 이미지 표시 의도 판단
             image_keywords = ["보여줘", "사진", "그림", "이미지", "생김새", "모습"]
