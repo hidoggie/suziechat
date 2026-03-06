@@ -323,6 +323,14 @@ BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
+@app.get("/health")
+async def health_check():
+    if INITIALIZATION_ERROR:
+        raise HTTPException(status_code=503, detail=INITIALIZATION_ERROR)
+    if MODEL is None:
+        raise HTTPException(status_code=503, detail="Still initializing...")
+    return {"status": "ok"}
+
 @app.get("/", response_class=FileResponse)
 async def read_index():
     return FileResponse(BASE_DIR / "static" / "index.html")
