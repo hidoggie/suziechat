@@ -476,13 +476,26 @@ function connectWebSocket() {
       }
     } else {
       const msg = JSON.parse(event.data);
+      // ── 서버 heartbeat ping → pong 응답 ──
+      if (msg.type === 'ping') {
+        socket.send(JSON.stringify({ type: 'pong' }));
+        return;
+      }
       addMessage(msg.type, msg.data);
     }
   };
 
   socket.onclose = () => {
-    addMessage('system', '서버 연결이 종료되었습니다.');
+    addMessage('system', '연결이 끊어졌습니다. 3초 후 재연결합니다...');
     setInputsEnabled(false);
+    // ── 자동 재연결 ──
+    setTimeout(() => {
+      connectWebSocket();
+    }, 3000);
+  };
+
+  socket.onerror = () => {
+    console.warn('WebSocket 오류 발생');
   };
 }
 
@@ -518,52 +531,54 @@ function demoResponse(userText) {
 /* ──────────────────────────────────────────
    음성 입력 모달
 ────────────────────────────────────────── */
-function startVoiceInput() {
+async function startVoiceInput() {
   voiceText = '';
+  audioChunks = [];
   sendVoiceBtn.disabled = true;
   recognizedText.textContent = '';
   recognizedText.classList.add('hidden');
   waveAnim.classList.remove('hidden');
   voiceModal.classList.remove('hidden');
 
-  // Web Speech API 사용 가능 여부 확인
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (SpeechRecognition) {
-    recognition = new SpeechRecognition();
-    recognition.lang = 'ko-KR';
-    recognition.interimResults = true;
-    recognition.continuous = false;
+  // ── MediaRecorder로 오디오 녹음 → 서버 Google STT로 전송 ──
+  // (Web Speech API 대신 서버 STT를 사용하여 다국어 자동 감지)
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const options = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? { mimeType: 'audio/webm;codecs=opus' }
+      : {};
+    mediaRecorder = new MediaRecorder(stream, options);
 
-    recognition.onresult = (e) => {
-      let interim = '', final = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) final += t;
-        else interim += t;
-      }
-      voiceText = final || interim;
-      showVoiceText(voiceText);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
     };
 
-    recognition.onend = () => {
-      if (voiceText) {
-        sendVoiceBtn.disabled = false;
-      }
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (audioChunks.length === 0) return;
+      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      // 오디오를 base64로 변환 후 서버로 전송하여 Google STT 처리
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64Audio = reader.result.split(',')[1];
+        // 녹음된 오디오를 서버로 전송 (서버가 Google STT로 언어 자동 감지)
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'audio', data: base64Audio }));
+          voiceModal.classList.add('hidden');
+          setInputsEnabled(false);
+          showVoiceText('서버에서 음성 인식 중...');
+        }
+      };
+      reader.readAsDataURL(blob);
     };
 
-    recognition.onerror = (e) => {
-      console.warn('음성 인식 오류:', e.error);
-      showVoiceText('인식 오류가 발생했습니다. 다시 시도해주세요.');
-    };
+    mediaRecorder.start();
+    showVoiceText('🎙️ 말씀해주세요... (버튼을 눌러 전송)');
+    sendVoiceBtn.disabled = false;
 
-    recognition.start();
-  } else {
-    // Web Speech API 미지원 → 데모 시뮬레이션
-    setTimeout(() => {
-      voiceText = '이 작품의 배경은 어디인가요?';
-      showVoiceText(voiceText);
-      sendVoiceBtn.disabled = false;
-    }, 1500);
+  } catch (err) {
+    console.error('마이크 접근 오류:', err);
+    showVoiceText('마이크 접근 권한이 필요합니다.');
   }
 }
 
@@ -574,27 +589,22 @@ function showVoiceText(text) {
 }
 
 function cancelVoiceInput() {
-  if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    mediaRecorder = null;
+  }
+  audioChunks = [];
   voiceText = '';
   voiceModal.classList.add('hidden');
 }
 
 function sendVoiceInput() {
-  if (!voiceText.trim()) return;
-  if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
-  voiceModal.classList.add('hidden');
-
   lastInputWasVoice = true;
-  addMessage('user_text', voiceText);
-
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'text', data: voiceText }));
-    setInputsEnabled(false);
-  } else {
-    demoResponse(voiceText);
+  // MediaRecorder 정지 → onstop에서 서버로 오디오 전송
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
   }
-
-  voiceText = '';
+  sendVoiceBtn.disabled = true;
 }
 
 /* ──────────────────────────────────────────
