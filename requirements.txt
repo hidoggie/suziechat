@@ -3,10 +3,10 @@ uvicorn
 gunicorn
 websockets
 python-multipart
-google-generativeai>=0.8.3
+google-generativeai==0.8.3
 google-cloud-speech
 google-cloud-texttospeech
 numpy
-PyMuPDF
+PyMuPDF==1.23.26
 Pillow
 langdetect>=1.0.9
