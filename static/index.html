@@ -2,65 +2,74 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI 도슨트봇 - AI Docent Bot</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0A0A0B">
+  <title>글로벌 AI 도슨트</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap">
   <style>
-    body {
-      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #0A0A0B; color: #FFFFFF; font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, 'Hiragino Sans', 'PingFang SC', 'Noto Sans CJK', sans-serif; }
+    .wrap { min-height: 100vh; min-height: 100dvh; max-width: 480px; margin: 0 auto; padding: max(24px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; justify-content: center; gap: 28px; }
+    .langs { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
+    .lang-btn { height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid #33333B; background: transparent; color: #E4E4EA; font-family: inherit; font-size: 13px; cursor: pointer; }
+    .lang-btn[aria-pressed="true"] { border-color: #1EBD7B; background: #1EBD7B; color: #0A0A0B; font-weight: 700; }
+    .logo { align-self: center; width: 148px; height: 148px; border-radius: 50%; background: #F5FB20; overflow: hidden; display: flex; align-items: flex-end; justify-content: center; }
+    .logo img { width: 148px; margin-bottom: -40px; }
+    .hello { text-align: center; display: flex; flex-direction: column; gap: 8px; }
+    .hello .eyebrow { font-family: 'Space Mono', monospace; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; color: #1EBD7B; }
+    .hello h1 { margin: 0; font-weight: 900; letter-spacing: -0.04em; font-size: 26px; }
+    .hello p { margin: 0; color: #B4B4BE; font-size: 15px; line-height: 1.6; word-break: keep-all; }
+    .go { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 20px; border-radius: 18px; background: #F5FB20; color: #0A0A0B; text-decoration: none; text-align: center; }
+    .go b { font-size: 19px; font-weight: 900; letter-spacing: -0.02em; }
+    .go span { font-size: 13px; font-weight: 600; opacity: .75; }
   </style>
-  <link rel="stylesheet" type="text/css" href="static/styles/fonts.css">
-  <link rel="stylesheet" type="text/css" href="static/styles/index.css">
-  <link rel="stylesheet" type="text/css" href="static/styles/theme.css">
 </head>
 <body>
-  <div class="min-h-screen bg-gradient-to-b from-sky-50 to-blue-50 flex flex-col items-center justify-center p-6">
-    <div class="w-full max-w-md space-y-8">
-      <!-- Logo -->
-      <div class="flex justify-center">
-        <div class="bg-white rounded-3xl p-6 shadow-lg">
-          <img 
-            src="static/assets/robot.png" 
-            alt="Docent Bot" 
-            class="w-48 h-48 object-contain"
-          />
-        </div>
-      </div>
+  <div id="bannerSlot"></div>
+  <div class="wrap">
+    <!-- 언어 선택 -->
+    <div id="langRow" class="langs" role="group" aria-label="Language"></div>
 
-      <!-- Welcome Message -->
-      <div class="text-center mb-8 space-y-2">
-        <p class="text-gray-700 px-6 leading-relaxed">
-          안녕하세요, 도슨트봇입니다. 작품을 직접 스캔하거나 음성으로 질문해 보세요. 쉽고 재미있는 맞춤형 전시 해설을 들려드립니다.
-        </p>
-      </div>
+    <div class="logo"><img src="static/assets/docent-duck.png" alt="" onerror="this.style.display='none'"></div>
 
-      <!-- Action Buttons -->
-      <div class="space-y-4">
-        <button 
-          onclick="location.href='static/voice_chat_bot.html'"
-          class="w-full bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-600 hover:to-blue-600 text-white py-8 rounded-2xl shadow-lg hover:shadow-xl transition-all"
-        >
-          <div class="flex flex-col items-center gap-2">
-            <span class="text-xl font-bold">음성 챗봇</span>
-            <span class="text-sm opacity-90">Voice Chatbot</span>
-          </div>
-        </button>
-
-        <button 
-          onclick="location.href='static/ar_docent_bot.html'"
-          class="w-full bg-gradient-to-r from-cyan-500 to-sky-500 hover:from-cyan-600 hover:to-sky-600 text-white py-8 rounded-2xl shadow-lg hover:shadow-xl transition-all"
-        >
-          <div class="flex flex-col items-center gap-2">
-            <span class="text-xl font-bold">작품 스캔</span>
-            <span class="text-sm opacity-90">Artwork Scan</span>
-          </div>
-        </button>
-      </div>
+    <div class="hello">
+      <span class="eyebrow">SYS-03 · AI DOCENT</span>
+      <h1 data-i18n="app_title"></h1>
+      <p data-i18n="welcome"></p>
     </div>
+
+    <!-- 작품/간판 스캔(AR 도슨트) 버튼은 이번 행사에서 제외 — 음성·텍스트 도슨트만 제공 -->
+    <a id="chatLink" class="go" href="static/voice_chat_bot.html">
+      <b data-i18n="btn_chat"></b>
+      <span data-i18n="btn_chat_sub"></span>
+    </a>
   </div>
+
+  <script src="static/config.js"></script>
+  <script src="static/common.js"></script>
+  <script>
+    const langRow = document.getElementById('langRow');
+    function renderLangs() {
+      langRow.innerHTML = '';
+      App.LANGS.forEach(l => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'lang-btn';
+        b.textContent = l.label;
+        b.setAttribute('aria-pressed', String(l.code === App.getLang()));
+        b.addEventListener('click', () => App.setLang(l.code));
+        langRow.appendChild(b);
+      });
+    }
+    function updateLinks() {
+      document.getElementById('chatLink').href = App.withLang('static/voice_chat_bot.html');
+    }
+    App.applyI18n();
+    renderLangs();
+    updateLinks();
+    App.mountInAppBanner(document.getElementById('bannerSlot'));
+    window.addEventListener('langchange', () => { renderLangs(); updateLinks(); });
+  </script>
 </body>
 </html>

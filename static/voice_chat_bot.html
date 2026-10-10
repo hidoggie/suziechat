@@ -1,719 +1,533 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <title>음성 챗봇 - 도슨트봇</title>    
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
-
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0A0A0B">
+  <title>글로벌 AI 도슨트</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap">
   <style>
+    /* ===== 글로벌 AI 도슨트 (Docent.dc.html 디자인) ===== */
+    * { box-sizing: border-box; }
     html, body {
-      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      height: 100%;
-      height: 100dvh;
-      overflow: hidden;
+      margin: 0; height: 100%; height: 100dvh; overflow: hidden;
+      background: #0A0A0B; color: #FFFFFF;
+      font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, 'Hiragino Sans', 'PingFang SC', 'Noto Sans CJK', sans-serif;
+      -webkit-tap-highlight-color: transparent;
     }
+    button, input { font-family: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; }
+    .hidden { display: none !important; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .mono { font-family: 'Space Mono', monospace; }
 
-    /* ── 채팅 말풍선 ── */
-    .message {
-      display: flex;
-      margin-bottom: 12px;
-    }
-    .message p {
-      max-width: 80%;
-      padding: 10px 14px;
-      border-radius: 18px;
-      line-height: 1.5;
-      font-size: 15px;
-    }
-    .user_text {
-      justify-content: flex-end;
-    }
-    .user_text p {
-      background: linear-gradient(135deg, #0ea5e9, #3b82f6);
-      color: white;
-      border-bottom-right-radius: 4px;
-    }
-    .ai {
-      justify-content: flex-start;
-    }
-    .ai p {
-      background: white;
-      color: #1e293b;
-      border-bottom-left-radius: 4px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-    }
-    .system {
-      justify-content: center;
-    }
-    .system p {
-      background: transparent;
-      color: #94a3b8;
-      font-size: 12px;
-      text-align: center;
-    }
+    .dc-app { height: 100vh; height: 100dvh; max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; overflow: hidden; }
 
-    /* ── Play 버튼 blink ── */
-    @keyframes blinkSoft {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.3; }
-    }
-    .blink-soft {
-      animation: blinkSoft 1s ease-in-out infinite;
-    }
+    /* 헤더 */
+    .dc-head { flex-shrink: 0; padding: 16px 16px 12px; padding-top: max(16px, env(safe-area-inset-top)); display: flex; flex-direction: column; gap: 14px; border-bottom: 1px solid #1F1F24; }
+    .dc-bar { display: flex; align-items: center; gap: 12px; }
+    .dc-back { width: 44px; height: 44px; border-radius: 50%; border: none; background: #17171A; color: #FFFFFF; display: flex; align-items: center; justify-content: center; flex-shrink: 0; text-decoration: none; }
+    .dc-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .dc-title span { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; color: #1EBD7B; }
+    .dc-title h1 { margin: 0; font-weight: 900; letter-spacing: -0.04em; font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dc-route { margin-left: auto; flex-shrink: 0; height: 44px; padding: 0 14px 0 12px; border-radius: 999px; background: #FD155E; color: #0A0A0B; display: flex; align-items: center; gap: 6px; text-decoration: none; font-size: 14px; font-weight: 700; white-space: nowrap; }
+    .dc-langs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .dc-lang { height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid #33333B; background: transparent; color: #E4E4EA; font-size: 13px; }
+    .dc-lang[aria-pressed="true"] { border-color: #1EBD7B; background: #1EBD7B; color: #0A0A0B; font-weight: 700; }
 
-    /* ── 음성 파형 애니메이션 ── */
-    @keyframes waveBar {
-      0%, 100% { transform: scaleY(0.4); }
-      50%       { transform: scaleY(1); }
+    /* 대화 영역 */
+    #transcript { flex: 1; overflow-y: auto; padding: 18px 16px; display: flex; flex-direction: column; gap: 14px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    .message { display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; }
+    .message .bubble { margin: 0; font-size: 15px; line-height: 1.6; word-break: keep-all; overflow-wrap: anywhere; }
+
+    .ai .avatar { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; background: #F5FB20; overflow: hidden; display: flex; align-items: flex-end; justify-content: center; }
+    .ai .avatar img { width: 40px; margin-bottom: -28px; }
+    .ai .bubble { max-width: min(284px, calc(100% - 50px)); background: #17171A; border-radius: 18px 18px 18px 6px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .ai .bubble .txt { margin: 0; }
+    .ai .bubble a { color: #F5FB20; }
+
+    .user_text { justify-content: flex-end; }
+    .user_text .bubble { max-width: min(260px, 80%); background: #F5FB20; color: #0A0A0B; border-radius: 18px 18px 6px 18px; padding: 12px 14px; font-weight: 500; line-height: 1.55; }
+
+    .system { justify-content: center; }
+    .system .bubble { color: #8A8A94; font-size: 12px; text-align: center; padding: 0 12px; }
+
+    .chat-img { width: 100%; border-radius: 14px; background: #0A0A0B; cursor: zoom-in; display: block; }
+
+    .dc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .dc-act { height: 36px; padding: 0 12px; border-radius: 10px; border: none; background: #232329; color: #FFFFFF; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+    .dc-act:disabled { opacity: .45; }
+    .dc-act.is-playing { color: #F5FB20; animation: blinkSoft 1s ease-in-out infinite; }
+    .dc-act .ic { display: none; }
+    .dc-act[data-state="idle"] .ic-play, .dc-act[data-state="playing"] .ic-pause, .dc-act[data-state="loading"] .ic-load { display: block; }
+
+    /* 타이핑 */
+    .typing .bubble { flex-direction: row; gap: 5px; align-items: center; padding: 16px; }
+    .typing .bubble span { width: 7px; height: 7px; border-radius: 50%; background: #8A8A94; animation: dot 1.2s infinite ease-in-out; }
+    .typing .bubble span:nth-child(2) { animation-delay: .15s; } .typing .bubble span:nth-child(3) { animation-delay: .3s; }
+    @keyframes dot { 0%, 80%, 100% { opacity: .3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+
+    /* 빠른 질문 칩 (첫 인사 아래) */
+    #chips { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 50px; flex-shrink: 0; }
+    .chip { height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid #F5FB20; background: transparent; color: #F5FB20; font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .chip:disabled { opacity: .45; }
+
+    /* 입력 바 */
+    .dc-form { flex-shrink: 0; margin: 0; padding: 12px 16px 22px; padding-bottom: max(22px, env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: center; border-top: 1px solid #1F1F24; }
+    .dc-mic { width: 48px; height: 48px; flex-shrink: 0; border-radius: 50%; border: none; background: #17171A; color: #1EBD7B; display: flex; align-items: center; justify-content: center; }
+    #textInput { flex-grow: 1; min-width: 0; height: 48px; border-radius: 999px; border: 1px solid #2E2E35; background: #121215; color: #FFFFFF; padding: 0 16px; font-size: 16px; outline: none; }
+    #textInput::placeholder { color: #6E6E78; }
+    #textInput:focus { border-color: #F5FB20; }
+    .dc-send { width: 48px; height: 48px; flex-shrink: 0; border-radius: 50%; border: none; background: #F5FB20; color: #0A0A0B; display: flex; align-items: center; justify-content: center; }
+    .dc-mic:disabled, .dc-send:disabled { opacity: .4; }
+
+    /* 음성 입력 팝업 */
+    #voiceModal { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .vm-card { position: relative; width: 100%; max-width: 380px; background: #141417; border: 1px solid #2A2A30; border-radius: 30px; padding: 30px 22px 26px; display: flex; flex-direction: column; align-items: center; gap: 12px; box-shadow: 0 30px 60px rgba(0,0,0,0.6); }
+    .vm-close { position: absolute; right: 12px; top: 12px; width: 44px; height: 44px; border-radius: 50%; border: none; background: transparent; color: #B4B4BE; display: flex; align-items: center; justify-content: center; }
+    .vm-mic { position: relative; width: 210px; height: 210px; display: flex; align-items: center; justify-content: center; }
+    .vm-ring1 { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(253,21,94,0.18); animation: ring 1.8s ease-out infinite; }
+    .vm-ring2 { position: absolute; inset: 22px; border-radius: 50%; border: 3px solid rgba(253,21,94,0.35); animation: ring 1.8s ease-out .3s infinite; }
+    @keyframes ring { 0% { transform: scale(.9); opacity: 1; } 100% { transform: scale(1.05); opacity: .4; } }
+    .vm-core { width: 116px; height: 116px; border-radius: 50%; background: #FD155E; color: #0A0A0B; display: flex; align-items: center; justify-content: center; box-shadow: 0 14px 34px rgba(253,21,94,0.45); }
+    #langBadge { margin-top: -28px; position: relative; padding: 6px 16px; border-radius: 999px; background: #0F2E2B; color: #1EBD7B; font-size: 14px; font-weight: 700; }
+    .vm-title { margin: 6px 0 0; font-weight: 900; letter-spacing: -0.04em; font-size: 26px; text-align: center; }
+    .vm-sub { margin: 0; font-size: 14px; color: #B4B4BE; text-align: center; }
+    .vm-box { width: 100%; min-height: 96px; margin-top: 8px; border-radius: 18px; background: #0A0A0B; border: 1px solid #2A2A30; display: flex; align-items: center; justify-content: center; padding: 14px 16px; }
+    #waveAnim { display: flex; align-items: center; gap: 6px; }
+    .wave-bar { width: 8px; border-radius: 4px; background: #F5FB20; animation: waveBar .9s ease-in-out infinite; }
+    .wave-bar:nth-child(1) { height: 52px; animation-delay: 0s; }  .wave-bar:nth-child(2) { height: 26px; animation-delay: .1s; }
+    .wave-bar:nth-child(3) { height: 38px; animation-delay: .2s; } .wave-bar:nth-child(4) { height: 20px; animation-delay: .3s; }
+    .wave-bar:nth-child(5) { height: 30px; animation-delay: .4s; }
+    @keyframes waveBar { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+    #recognizedText { margin: 0; font-size: 16px; line-height: 1.5; text-align: center; color: #FFFFFF; word-break: keep-all; }
+    .vm-btns { width: 100%; margin-top: 10px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+    .vm-cancel { height: 56px; border-radius: 16px; border: 1.5px solid #3A3A42; background: transparent; color: #FFFFFF; font-size: 15px; font-weight: 700; }
+    .vm-send { height: 56px; border-radius: 16px; border: none; background: #F5FB20; color: #0A0A0B; font-size: 15px; font-weight: 700; }
+    .vm-send:disabled { opacity: .4; }
+
+    @keyframes blinkSoft { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin 1s linear infinite; }
+
+    @media (max-width: 360px) {
+      .dc-title h1 { font-size: 19px; }
+      .dc-route { padding: 0 12px 0 10px; font-size: 13px; }
+      .vm-mic { width: 170px; height: 170px; }
+      .vm-core { width: 96px; height: 96px; }
     }
-    .wave-bar {
-      width: 6px;
-      border-radius: 3px;
-      background: #3b82f6;
-      animation: waveBar 0.9s ease-in-out infinite;
+    @media (max-height: 640px) {
+      .vm-mic { width: 150px; height: 150px; }
+      .vm-core { width: 86px; height: 86px; }
+      .vm-card { padding: 22px 18px 20px; gap: 8px; }
     }
-    .wave-bar:nth-child(1) { animation-delay: 0.0s; height: 32px; }
-    .wave-bar:nth-child(2) { animation-delay: 0.1s; height: 48px; }
-    .wave-bar:nth-child(3) { animation-delay: 0.2s; height: 24px; }
-    .wave-bar:nth-child(4) { animation-delay: 0.3s; height: 40px; }
-    .wave-bar:nth-child(5) { animation-delay: 0.4s; height: 32px; }
   </style>
 </head>
 <body>
 
-<div id="chatbot-view" class="bg-gradient-to-b from-sky-100 to-blue-100 flex flex-col" style="height:100vh; height:100dvh; overflow:hidden;">
+<div class="dc-app">
 
-  <!-- ── Header ── -->
-  <header class="bg-gradient-to-r from-sky-500 to-blue-500 text-white p-4 flex items-center gap-3 shadow-md">
-      <button onclick="location.href='https://suziechat.onrender.com'"
-          class="text-white hover:bg-white/20 w-11 h-11 rounded-xl flex items-center justify-center transition-colors backdrop-blur-sm bg-black/20"
-           title="홈으로">
-           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-               <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-               <polyline points="9 22 9 12 15 12 15 22"/>
-           </svg>
-       </button>
-    <div class="flex items-center gap-2 flex-1">
-      <img src="assets/robot.png" alt="Docent Bot" class="w-10 h-10 object-contain" onerror="this.style.display='none'">
-      <div>
-        <div class="font-semibold flex items-center gap-2">
-          AI 도슨트 봇
-          <!--span class="text-xs bg-white text-sky-600 px-2 py-0.5 rounded font-medium">AI Docentbot</span-->
-        </div>
+  <!-- 헤더 -->
+  <header class="dc-head">
+    <div class="dc-bar">
+      <a id="homeBtn" class="dc-back" href="/" aria-label="이전 화면으로" data-i18n-title="home">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+      </a>
+      <div class="dc-title">
+        <span class="mono">SYS-03 · AI DOCENT</span>
+        <h1 id="dcTitle">글로벌 AI 도슨트</h1>
       </div>
+      <a id="routeLink" class="dc-route" href="/index.html?view=venue">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 18-7-4-7 4z"/></svg>
+        <span id="routeLabel">길안내 받기</span>
+      </a>
     </div>
-    <button
-      id="goto-ar-btn"
-      onclick="location.href='ar_docent_bot.html'"
-      class="text-white hover:bg-white/20 w-12 h-12 rounded-lg flex items-center justify-center transition-colors"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
-        <circle cx="12" cy="13" r="3"/>
-      </svg>
-    </button>
+    <div id="langRow" class="dc-langs" role="group" aria-label="안내 언어"></div>
   </header>
+  <div id="bannerSlot"></div>
 
-  <!-- ── Chat transcript ── -->
-  <main id="transcript" class="flex-1 overflow-y-auto p-4 space-y-2" style="overscroll-behavior: contain; -webkit-overflow-scrolling: touch;"></main>
+  <!-- 대화 -->
+  <main id="transcript" aria-live="polite"></main>
+  <!-- 빠른 질문 칩: 첫 인사 말풍선 바로 아래로 옮겨 붙입니다 -->
+  <div id="chips"></div>
 
-  <!-- ══════════════════════════════════════
-       언어 선택 모달 (음성 입력 전)
-  ══════════════════════════════════════ -->
-  <div id="langModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-    <div class="bg-white rounded-3xl p-8 mx-6 w-full max-w-sm shadow-2xl">
-      <div class="flex justify-end mb-2">
-        <button onclick="closeLangModal()" class="text-gray-400 hover:text-gray-600">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      </div>
-      <div class="flex flex-col items-center">
-        <h3 class="text-xl font-bold text-gray-800 mb-2">언어를 선택해주세요</h3>
-        <p class="text-sm text-gray-500 mb-6 text-center">Select your language / 言語を選択してください</p>
-        <div class="flex flex-col gap-3 w-full">
-          <button onclick="selectLang('ko-KR', '한국어')"
-            class="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-sky-500 text-white text-lg font-semibold shadow hover:opacity-90 transition">
-            🇰🇷 한국어
-          </button>
-          <button onclick="selectLang('en-US', 'English')"
-            class="w-full py-4 rounded-2xl bg-gradient-to-r from-indigo-500 to-blue-500 text-white text-lg font-semibold shadow hover:opacity-90 transition">
-            🇺🇸 English
-          </button>
-          <button onclick="selectLang('ja-JP', '日本語')"
-            class="w-full py-4 rounded-2xl bg-gradient-to-r from-red-500 to-pink-500 text-white text-lg font-semibold shadow hover:opacity-90 transition">
-            🇯🇵 日本語
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══════════════════════════════════════
-       Voice Input Modal
-  ══════════════════════════════════════ -->
-  <div id="voiceModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-    <div class="bg-white rounded-3xl p-8 mx-6 w-full max-w-sm shadow-2xl">
-
-      <!-- Close -->
-      <div class="flex justify-end mb-2">
-        <button onclick="cancelVoiceInput()" class="text-gray-400 hover:text-gray-600">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      </div>
-
-      <!-- Mic icon + pulse rings -->
-      <div class="flex flex-col items-center mb-6">
-        <div class="relative mb-6">
-          <div class="w-24 h-24 bg-gradient-to-br from-red-400 to-red-600 rounded-full flex items-center justify-center shadow-lg">
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" x2="12" y1="19" y2="22"/>
-            </svg>
-          </div>
-          <div class="absolute inset-0 -m-3 pointer-events-none">
-            <div class="w-32 h-32 border-4 border-red-400 rounded-full animate-ping opacity-20"></div>
-          </div>
-          <div class="absolute inset-0 -m-6 pointer-events-none" style="animation-delay:0.3s">
-            <div class="w-40 h-40 border-4 border-red-300 rounded-full animate-ping opacity-10"></div>
-          </div>
-        </div>
-
-        <!-- 선택된 언어 표시 -->
-        <div id="selectedLangBadge" class="mb-2 px-4 py-1 rounded-full bg-blue-100 text-blue-700 text-sm font-semibold"></div>
-
-        <h3 class="text-xl font-bold text-gray-800 mb-1">음성 입력 중...</h3>
-        <p class="text-sm text-gray-500 mb-4 text-center">질문을 말씀해주세요</p>
-
-        <!-- 실시간 음성 텍스트 표시 영역 -->
-        <div id="voiceInputText"
-          class="w-full min-h-[80px] bg-gray-50 rounded-2xl p-4 mb-6 border-2 border-gray-200 flex items-center justify-center transition-all">
-          <div id="waveAnim" class="flex items-center gap-1">
-            <div class="wave-bar"></div>
-            <div class="wave-bar"></div>
-            <div class="wave-bar"></div>
-            <div class="wave-bar"></div>
-            <div class="wave-bar"></div>
-          </div>
-          <p id="recognizedText" class="text-gray-800 text-center hidden"></p>
-        </div>
-
-        <!-- Buttons -->
-        <div class="flex gap-3 w-full">
-          <button
-            onclick="cancelVoiceInput()"
-            class="flex-1 py-4 rounded-xl border-2 border-gray-300 hover:bg-gray-100 transition-colors text-gray-700 font-medium"
-          >취소 (Cancel)</button>
-          <button
-            id="sendVoiceBtn"
-            onclick="sendVoiceInput()"
-            disabled
-            class="flex-1 bg-blue-500 hover:bg-blue-600 text-white py-4 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium"
-          >전송 (Send)</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Footer / Input area ── -->
-  <footer class="bg-white flex items-center gap-2 border-t px-3 py-2 flex-shrink-0" style="padding-bottom: max(8px, env(safe-area-inset-bottom));">
-
-    <!-- 마이크 버튼 -->
-    <button
-      id="micBtn"
-      onclick="startVoiceInput()"
-      class="text-gray-600 hover:bg-gray-100 w-10 h-14 rounded-lg flex items-center justify-center transition-colors flex-shrink-0"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-        <line x1="12" x2="12" y1="19" y2="22"/>
-      </svg>
+  <!-- 입력 바 -->
+  <form id="dcForm" class="dc-form" autocomplete="off">
+    <label for="textInput" class="sr-only">도슨트에게 질문하기</label>
+    <button id="micBtn" type="button" class="dc-mic" aria-haspopup="dialog" aria-label="음성으로 질문하기">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
     </button>
-
-    <!-- 텍스트 입력 -->
-    <div class="relative flex-1">
-      <input
-        type="text"
-        id="text-input"
-        placeholder="텍스트로 질문하세요..."
-        class="w-full h-10 pl-4 pr-12 rounded-full border border-gray-300 text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-blue-400 text-sm"
-        onkeypress="if(event.key==='Enter') sendTextMessage()"
-      >
-      <button
-        id="send-btn"
-        onclick="sendTextMessage()"
-        class="absolute right-2 top-1/2 -translate-y-1/2 text-blue-500 hover:text-blue-600 p-1.5 rounded-full hover:bg-blue-50 transition-colors"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>
-        </svg>
-      </button>
-    </div>
-
-    <!-- Play / Pause 버튼 -->
-    <button
-      id="playBtn"
-      class="text-gray-600 hover:bg-gray-100 w-14 h-14 rounded-lg flex items-center justify-center transition-colors flex-shrink-0"
-      title="음성 재생 / 일시정지"
-    >
-      <!-- 재생 아이콘 (기본) -->
-      <svg id="iconPlay" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/>
-        <path d="M16 9a5 5 0 0 1 0 6"/>
-        <path d="M19.364 18.364a9 9 0 0 0 0-12.728"/>
-      </svg>
-      <!-- 일시정지 아이콘 (재생 중) -->
-      <svg id="iconPause" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="hidden">
-        <rect x="6" y="4" width="4" height="16" rx="1"/>
-        <rect x="14" y="4" width="4" height="16" rx="1"/>
-      </svg>
+    <input id="textInput" type="text" maxlength="300" enterkeyhint="send" autocomplete="off" data-i18n-placeholder="placeholder">
+    <button id="sendBtn" type="submit" class="dc-send" aria-label="보내기">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
     </button>
-  </footer>
+  </form>
 </div>
 
-<!-- ══════════════════════════════════════════
-     SCRIPT
-══════════════════════════════════════════ -->
+<!-- 음성 입력 팝업 -->
+<div id="voiceModal" class="hidden">
+  <div class="vm-card" role="dialog" aria-modal="true" aria-labelledby="voiceTitle">
+    <button id="closeVoiceBtn" type="button" class="vm-close" aria-label="음성 입력 닫기">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="vm-mic" aria-hidden="true">
+      <span class="vm-ring1"></span>
+      <span class="vm-ring2"></span>
+      <span class="vm-core">
+        <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      </span>
+    </div>
+    <span id="langBadge"></span>
+    <h2 id="voiceTitle" class="vm-title" data-i18n="listening"></h2>
+    <p class="vm-sub" data-i18n="speak_now"></p>
+    <div class="vm-box">
+      <div id="waveAnim" aria-hidden="true"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></div>
+      <p id="recognizedText" class="hidden"></p>
+    </div>
+    <div class="vm-btns">
+      <button id="cancelVoiceBtn" type="button" class="vm-cancel" data-i18n="cancel"></button>
+      <button id="sendVoiceBtn" type="button" class="vm-send" disabled data-i18n="send"></button>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="common.js"></script>
 <script>
-/* ──────────────────────────────────────────
-   전역 상태
-────────────────────────────────────────── */
-let socket = null;
-let mediaRecorder = null;
-let audioChunks = [];
-let isRecording = false;
-let lastInputWasVoice = false;
-let selectedLang = 'ko-KR';      // 선택된 언어 코드
-let selectedLangName = '한국어';  // 선택된 언어 이름
-let reconnectTimer = null;        // 재연결 타이머 (중복 방지)
-let reconnectCount = 0;           // 재연결 시도 횟수
-const MAX_RECONNECT = 5;          // 최대 재연결 횟수
+/* ── 이 페이지 설정 ──────────────────────────────────────────
+   AVATAR_SRC : 도슨트(오리대리) 아바타 이미지 경로 (static 폴더 기준)
+   ROUTE_URL  : 헤더 "길안내 받기" → 스탬프투어 길안내 화면 주소
+   TOUR_URL   : 이전 페이지 기록이 없을 때 뒤로가기 버튼이 갈 주소 (비워두면 App.homeUrl)
+   ※ 작품/간판 스캔(AR 도슨트, /api/recognize-image) 기능은 이번 행사에서 제외했습니다. */
+const AVATAR_SRC = 'assets/docent-duck.png';
+const ROUTE_URL  = '/index.html?view=venue';
+const TOUR_URL   = '';
 
-let audioContext = null;
-let currentAudioSource = null;   // BufferSource (재생 중인 오디오)
-let currentAudioBuffer = null;   // 마지막으로 받은 전체 AudioBuffer
-let audioPlaybackOffset = 0;     // 현재까지 재생한 위치(초)
-let audioStartedAt = 0;          // audioContext.currentTime 기준 시작 시각
-let isPlaying = false;
-
-let recognition = null;          // Web Speech API
-let voiceText = "";              // 팝업에서 인식된 텍스트
-
-/* ──────────────────────────────────────────
-   DOM refs
-────────────────────────────────────────── */
-const transcriptDiv = document.getElementById('transcript');
-const textInput     = document.getElementById('text-input');
-const sendBtn       = document.getElementById('send-btn');
-const micBtn        = document.getElementById('micBtn');
-const playBtn       = document.getElementById('playBtn');
-const iconPlay      = document.getElementById('iconPlay');
-const iconPause     = document.getElementById('iconPause');
-const voiceModal    = document.getElementById('voiceModal');
-const sendVoiceBtn  = document.getElementById('sendVoiceBtn');
-const waveAnim      = document.getElementById('waveAnim');
-const recognizedText= document.getElementById('recognizedText');
-
-/* ──────────────────────────────────────────
-   유틸
-────────────────────────────────────────── */
-function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream; }
-
-/* 스트리밍 중인 AI 말풍선 요소 추적 */
-let streamingBubble = null;   // 현재 이어 붙이는 중인 <p> 요소
-let streamingRaw    = '';     // 누적된 원본 텍스트 (줄바꿈 변환 전)
-
-function renderAiBubbleText(p, rawText) {
-  /* \n\n → 문단 간격, \n → 줄바꿈. XSS 방지 이스케이프 포함 */
-  const escaped = rawText
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  p.innerHTML = escaped
-    .replace(/\n\n+/g, '<br><br>')
-    .replace(/\n/g, '<br>');
-}
-
-function addMessage(type, data) {
-  if (type === 'ai_text') {
-    /* ── 스트리밍 조각: 기존 말풍선에 이어 붙이기 ── */
-    if (!streamingBubble) {
-      // 첫 조각 → 새 말풍선 생성
-      const wrap = document.createElement('div');
-      wrap.className = 'message ai';
-      const p = document.createElement('p');
-      wrap.appendChild(p);
-      transcriptDiv.appendChild(wrap);
-      streamingBubble = p;
-      streamingRaw = '';
-    }
-    streamingRaw += data;
-    renderAiBubbleText(streamingBubble, streamingRaw);
-    streamingBubble.closest('.message').scrollIntoView({ behavior: 'smooth', block: 'end' });
-    return;
-  }
-
-  /* ── ai_text 이외 메시지 → 스트리밍 종료 처리 후 새 말풍선 ── */
-  if (type === 'ai_done' || type === 'ai_end') {
-    // 서버가 완료 신호를 별도 타입으로 보내는 경우
-    streamingBubble = null;
-    streamingRaw = '';
-    return;
-  }
-
-  // 새 메시지가 오면 스트리밍 상태 초기화
-  streamingBubble = null;
-  streamingRaw = '';
-
-  const wrap = document.createElement('div');
-  wrap.className = 'message ' + (type === 'user_text' ? 'user_text' : 'system');
-
-  if (type === 'ai_image') {
-    wrap.innerHTML = `<img src="${data.url}" alt="AI image" style="max-width:80%;border-radius:12px;">`;
-  } else {
-    const p = document.createElement('p');
-    p.textContent = data;
-    wrap.appendChild(p);
-  }
-  transcriptDiv.appendChild(wrap);
-  wrap.scrollIntoView({ behavior: 'smooth', block: 'end' });
-}
-
-function setInputsEnabled(enabled) {
-  sendBtn.disabled = !enabled;
-  textInput.disabled = !enabled;
-  micBtn.disabled = !enabled;
-}
-
-/* ──────────────────────────────────────────
-   Play 버튼 상태
-────────────────────────────────────────── */
-function setPlayState(playing) {
-  isPlaying = playing;
-  if (playing) {
-    iconPlay.classList.add('hidden');
-    iconPause.classList.remove('hidden');
-    playBtn.classList.add('blink-soft');
-  } else {
-    iconPlay.classList.remove('hidden');
-    iconPause.classList.add('hidden');
-    playBtn.classList.remove('blink-soft');
-  }
-}
-
-/* ──────────────────────────────────────────
-   오디오 재생 / 일시정지 / 재개
-────────────────────────────────────────── */
-async function ensureAudioContext() {
-  if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  if (audioContext.state === 'suspended') await audioContext.resume();
-}
-
-function stopSource() {
-  if (currentAudioSource) {
-    currentAudioSource.onended = null;
-    try { currentAudioSource.stop(); } catch(e) {}
-    currentAudioSource = null;
-  }
-}
-
-async function playFromOffset(offset) {
-  await ensureAudioContext();
-  stopSource();
-
-  currentAudioSource = audioContext.createBufferSource();
-  currentAudioSource.buffer = currentAudioBuffer;
-
-  // ── 음량 GainNode: iOS 음량 작은 문제 개선 ──
-  const gainNode = audioContext.createGain();
-  gainNode.gain.value = 2.0;  // 기본 볼륨 2배 증폭
-  currentAudioSource.connect(gainNode);
-  gainNode.connect(audioContext.destination);
-
-  currentAudioSource.start(0, offset);
-  audioStartedAt = audioContext.currentTime - offset;
-
-  currentAudioSource.onended = () => {
-    audioPlaybackOffset = 0;
-    currentAudioSource = null;
-    setPlayState(false);
-    setInputsEnabled(true);
-  };
-
-  setPlayState(true);
-  setInputsEnabled(false);
-}
-
-async function playReceivedAudio(audioBlob) {
-  await ensureAudioContext();
+/* 디자인에서 새로 생긴 문구 (common.js 사전에 같은 키가 있으면 그쪽을 우선 사용) */
+const LOCAL_TEXT = {
+  dc_title: { ko: '글로벌 AI 도슨트', en: 'Global AI Docent', ja: 'グローバルAIドーセント', zh: '全球AI讲解员', vi: 'AI Docent toàn cầu' },
+  dc_route: { ko: '길안내 받기', en: 'Directions', ja: '道案内', zh: '路线指引', vi: 'Chỉ đường' },
+  dc_listen: { ko: '음성으로 듣기', en: 'Listen', ja: '音声で聞く', zh: '语音收听', vi: 'Nghe giọng nói' },
+  dc_pause: { ko: '일시정지', en: 'Pause', ja: '一時停止', zh: '暂停', vi: 'Tạm dừng' },
+  dc_loading: { ko: '음성 준비 중...', en: 'Loading...', ja: '準備中...', zh: '准备中...', vi: 'Đang tải...' }
+};
+function tt(key) {
   try {
-    const arrayBuffer = await audioBlob.arrayBuffer();
-    currentAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-    audioPlaybackOffset = 0;
-    await playFromOffset(0);
-  } catch(e) {
-    console.error('오디오 재생 오류:', e);
-    setInputsEnabled(true);
-  }
+    const v = App.t(key);
+    if (typeof v === 'string' && v && v !== key) return v;
+  } catch (e) {}
+  const m = LOCAL_TEXT[key] || {};
+  const lang = String(App.getLang() || 'ko').toLowerCase();
+  return m[lang] || m[lang.slice(0, 2)] || m.en || '';
 }
 
-function pauseAudio() {
-  if (!currentAudioSource) return;
-  // 현재까지 재생한 위치 저장
-  audioPlaybackOffset = audioContext.currentTime - audioStartedAt;
-  stopSource();
-  setPlayState(false);
-  setInputsEnabled(true);
-}
+const $ = id => document.getElementById(id);
+const transcript = $('transcript'), input = $('textInput'), sendBtn = $('sendBtn'), micBtn = $('micBtn');
+const chipsEl = $('chips'), voiceModal = $('voiceModal'), sendVoiceBtn = $('sendVoiceBtn');
+const waveAnim = $('waveAnim'), recognizedText = $('recognizedText');
 
-async function resumeAudio() {
-  if (!currentAudioBuffer) return;
-  await playFromOffset(audioPlaybackOffset);
-}
+const player = new App.TTSPlayer();
+let history = [];          // 최근 대화 (서버에 맥락으로 전달)
+let busy = false;
+let last = null;           // 지금 재생 대상 답변 {text, lang, btn}
+let ttsLoading = false;
 
-playBtn.addEventListener('click', async () => {
-  if (!currentAudioBuffer) return; // 받은 오디오 없으면 무시
-  if (isPlaying) {
-    pauseAudio();
+const ICON_PLAY  = '<svg class="ic ic-play" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></svg>';
+const ICON_PAUSE = '<svg class="ic ic-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>';
+const ICON_LOAD  = '<svg class="ic ic-load spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.56"/></svg>';
+
+/* ── 말풍선 ── */
+function scrollToEnd(el) { el.scrollIntoView({ behavior: 'smooth', block: 'end' }); }
+function makeAvatar() {
+  const av = document.createElement('div');
+  av.className = 'avatar';
+  const img = document.createElement('img');
+  img.src = AVATAR_SRC; img.alt = '';
+  img.onerror = () => { img.style.display = 'none'; };
+  av.appendChild(img);
+  return av;
+}
+function addBubble(kind, text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'message ' + kind;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  if (kind === 'ai') {
+    wrap.appendChild(makeAvatar());
+    const p = document.createElement('p');
+    p.className = 'txt';
+    App.renderText(p, text);
+    bubble.appendChild(p);
   } else {
-    await resumeAudio();
+    bubble.textContent = text;
   }
+  wrap.appendChild(bubble);
+  transcript.appendChild(wrap);
+  scrollToEnd(wrap);
+  return wrap;
+}
+/* 답변 이미지: 같은 말풍선 안에 카드처럼 표시 */
+function addImages(bubbleWrap, images) {
+  const bubble = bubbleWrap.querySelector('.bubble');
+  const anchor = bubble.querySelector('.dc-actions');
+  images.forEach(img => {
+    const el = document.createElement('img');
+    el.src = App.apiUrl(img.url);
+    el.alt = img.title || '';
+    el.className = 'chat-img';
+    el.addEventListener('click', () => window.open(el.src, '_blank'));
+    el.addEventListener('load', () => scrollToEnd(bubbleWrap));
+    bubble.insertBefore(el, anchor);
+  });
+}
+/* 답변 말풍선 하단 "음성으로 듣기" 버튼 */
+function addListenButton(bubbleWrap, text, lang) {
+  const row = document.createElement('div');
+  row.className = 'dc-actions';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'dc-act';
+  btn.dataset.state = 'idle';
+  btn.innerHTML = ICON_PLAY + ICON_PAUSE + ICON_LOAD + '<span class="lbl"></span>';
+  btn.querySelector('.lbl').textContent = tt('dc_listen');
+  btn.addEventListener('click', () => onListen({ text, lang, btn }));
+  row.appendChild(btn);
+  bubbleWrap.querySelector('.bubble').appendChild(row);
+  return btn;
+}
+function addTyping() {
+  const wrap = document.createElement('div');
+  wrap.className = 'message ai typing';
+  wrap.appendChild(makeAvatar());
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  b.innerHTML = '<span></span><span></span><span></span>';
+  wrap.appendChild(b);
+  transcript.appendChild(wrap);
+  scrollToEnd(wrap);
+  return wrap;
+}
+function setBusy(b) {
+  busy = b;
+  sendBtn.disabled = b; micBtn.disabled = b;
+  chipsEl.querySelectorAll('button').forEach(x => { x.disabled = b; });
+}
+
+/* ── 음성 재생 (답변별 "음성으로 듣기") ── */
+function updatePlayUI() {
+  transcript.querySelectorAll('.dc-act').forEach(btn => {
+    const active = last && last.btn === btn;
+    const state = !active ? 'idle' : ttsLoading ? 'loading' : player.playing ? 'playing' : 'idle';
+    btn.dataset.state = state;
+    btn.classList.toggle('is-playing', state === 'playing');
+    btn.querySelector('.lbl').textContent = tt(state === 'playing' ? 'dc_pause' : state === 'loading' ? 'dc_loading' : 'dc_listen');
+  });
+}
+player.onstate = (ev) => { if (ev !== 'progress') updatePlayUI(); };
+
+async function playLast() {
+  if (!last) return;
+  player.unlock();
+  try {
+    if (!player.isLoaded(last.text, last.lang)) {
+      ttsLoading = true; updatePlayUI();
+      await player.load(last.text, last.lang);
+    }
+    player.play();
+  } catch (e) {
+    console.warn('TTS 실패', e);
+    addBubble('system', e.status === 429 ? App.t('err_rate') : App.t('tts_error'));
+  } finally {
+    ttsLoading = false; updatePlayUI();
+  }
+}
+
+function onListen(target) {
+  if (ttsLoading) return;
+  if (last && last.btn === target.btn && player.playing) { player.pause(); return; }
+  if (!last || last.btn !== target.btn) { player.stop(); last = target; }
+  playLast();
+}
+
+/* ── 질문 전송 ── */
+async function ask(text, viaVoice) {
+  text = (text || '').trim().slice(0, 300);
+  if (!text || busy) return;
+  player.unlock();          // 사용자 탭 시점에 오디오 잠금 해제 (iOS)
+  player.stop();
+
+  addBubble('user_text', text);
+  setBusy(true);
+  const typing = addTyping();
+  const lang = App.getLang();
+
+  try {
+    const res = await App.apiPost('/api/chat', { message: text, lang, history: history.slice(-6) }, 45000);
+    typing.remove();
+    const answer = res.text || '';
+    const wrap = addBubble('ai', answer);
+    const btn = addListenButton(wrap, answer, lang);
+    if (res.images && res.images.length) addImages(wrap, res.images);
+
+    history.push({ role: 'user', text }, { role: 'assistant', text: answer });
+    history = history.slice(-6);
+    last = { text: answer, lang, btn };
+    updatePlayUI();
+    if (viaVoice) await playLast();   // 음성으로 물으면 음성으로 답변
+  } catch (e) {
+    typing.remove();
+    addBubble('system', App.errorText(e));
+  } finally {
+    setBusy(false);
+  }
+}
+
+function sendTyped() {
+  const v = input.value;
+  input.value = '';
+  ask(v, false);
+}
+$('dcForm').addEventListener('submit', e => { e.preventDefault(); sendTyped(); });
+input.addEventListener('keydown', e => {
+  // 한글·일본어·중국어 IME 조합 중 Enter는 폼 전송을 막음
+  if (e.key === 'Enter' && (e.isComposing || e.keyCode === 229)) e.preventDefault();
 });
 
-/* ──────────────────────────────────────────
-   WebSocket
-────────────────────────────────────────── */
-function connectWebSocket() {
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  socket = new WebSocket(`${proto}//${window.location.host}/ws`);
-
-  // ── 연결 성공 ──
-  socket.onopen = () => {
-    reconnectCount = 0;
-    reconnectTimer = null;
-    setInputsEnabled(true);
-    addMessage('system', '챗봇이 준비되었습니다.');
-  };
-
-  // ── 메시지 수신 ──
-  socket.onmessage = async (event) => {
-    if (event.data instanceof Blob) {
-      streamingBubble = null;
-      streamingRaw = '';
-      const audioBlob = event.data;
-      setInputsEnabled(true);
-      if (lastInputWasVoice) {
-        // iOS/Android 모두 시도, 실패 시 play 버튼으로 유도
-        try {
-          await playReceivedAudio(audioBlob);
-        } catch(e) {
-          // iOS 자동재생 차단 시 버퍼만 저장
-          await ensureAudioContext();
-          const arrayBuffer = await audioBlob.arrayBuffer();
-          currentAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-          audioPlaybackOffset = 0;
-          setPlayState(false);
-          // iOS에서 자동재생 안 될 때 play 버튼 강조
-          if (isIOS()) {
-            playBtn.classList.add('animate-bounce');
-            setTimeout(() => playBtn.classList.remove('animate-bounce'), 3000);
-          }
-        }
-      } else {
-        await ensureAudioContext();
-        const arrayBuffer = await audioBlob.arrayBuffer();
-        currentAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        audioPlaybackOffset = 0;
-        setPlayState(false);
-      }
-    } else {
-      const msg = JSON.parse(event.data);
-      if (msg.type === 'ping') {
-        socket.send(JSON.stringify({ type: 'pong' }));
-        return;
-      }
-      addMessage(msg.type, msg.data);
-    }
-  };
-
-  // ── 연결 끊김 → 재연결 (횟수 제한, 중복 방지) ──
-  socket.onclose = () => {
-    setInputsEnabled(false);
-    if (reconnectTimer) return;  // 이미 타이머 있으면 중복 방지
-    if (reconnectCount >= MAX_RECONNECT) {
-      addMessage('system', '연결에 실패했습니다. 페이지를 새로고침 해주세요.');
-      return;
-    }
-    reconnectCount++;
-    const delay = Math.min(3000 * reconnectCount, 15000);
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      connectWebSocket();
-    }, delay);
-  };
-
-  socket.onerror = () => {
-    console.warn('WebSocket 오류');
-  };
+/* ── 빠른 질문 칩 ── */
+function renderChips() {
+  chipsEl.innerHTML = '';
+  App.t('chips').forEach(c => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.textContent = c.label;
+    b.disabled = busy;
+    b.addEventListener('click', () => ask(c.q, false));
+    chipsEl.appendChild(b);
+  });
 }
 
-/* ──────────────────────────────────────────
-   텍스트 전송
-────────────────────────────────────────── */
-function sendTextMessage() {
-  const text = textInput.value.trim();
-  if (!text) return;
-  lastInputWasVoice = false;
-
-  addMessage('user_text', text);
-  textInput.value = '';
-
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'text', data: text }));
-    setInputsEnabled(false);
-  } else {
-    // 서버 없을 때 데모용 더미 응답
-    demoResponse(text);
-  }
+/* ── 언어 버튼 ── */
+function renderLangs() {
+  const row = $('langRow');
+  row.innerHTML = '';
+  App.LANGS.forEach(l => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dc-lang';
+    b.textContent = l.label;
+    b.setAttribute('aria-pressed', String(l.code === App.getLang()));
+    b.addEventListener('click', () => { if (l.code !== App.getLang()) App.setLang(l.code); });
+    row.appendChild(b);
+  });
+}
+function renderLocalText() {
+  $('dcTitle').textContent = tt('dc_title');
+  $('routeLabel').textContent = tt('dc_route');
+  document.title = tt('dc_title');
 }
 
-/* 데모용: 서버 없을 때 ───────────────────── */
-function demoResponse(userText) {
-  setTimeout(() => {
-    const reply = `"${userText}"에 대한 답변입니다. (데모 모드 — 서버가 연결되지 않았습니다.)`;
-    addMessage('ai_text', reply);
-    setInputsEnabled(true);
-  }, 800);
-}
-
-/* ──────────────────────────────────────────
-   음성 입력 모달
-────────────────────────────────────────── */
-// 마이크 버튼 클릭 → 언어 선택 모달 열기
-function startVoiceInput() {
-  document.getElementById('langModal').classList.remove('hidden');
-}
-
-function closeLangModal() {
-  document.getElementById('langModal').classList.add('hidden');
-}
-
-// 언어 선택 후 음성 인식 시작
-function selectLang(langCode, langName) {
-  selectedLang = langCode;
-  selectedLangName = langName;
-  closeLangModal();
-  openVoiceModal();
-}
-
-function openVoiceModal() {
-  voiceText = '';
-  sendVoiceBtn.disabled = true;
-  recognizedText.textContent = '';
-  recognizedText.classList.add('hidden');
-  waveAnim.classList.remove('hidden');
-  voiceModal.classList.remove('hidden');
-
-  // 선택된 언어 배지 표시
-  const badge = document.getElementById('selectedLangBadge');
-  badge.textContent = selectedLangName;
-
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    showVoiceText('이 브라우저는 음성 인식을 지원하지 않습니다.');
-    return;
-  }
-
-  recognition = new SpeechRecognition();
-  recognition.lang = selectedLang;     // ← 선택된 언어로 STT 인식
-  recognition.interimResults = true;
-  recognition.continuous = false;
-
-  recognition.onresult = (e) => {
-    let interim = '', final = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) final += t;
-      else interim += t;
-    }
-    voiceText = final || interim;
-    // 실시간 텍스트 미리보기
-    showVoiceText(voiceText);
-    // iOS는 isFinal이 늦게 오므로 interim 텍스트가 있어도 전송 버튼 활성화
-    if (voiceText.trim()) sendVoiceBtn.disabled = false;
-  };
-
-  // onend: iOS에서 isFinal 없이 종료될 때 대비
-  recognition.onend = () => {
-    if (voiceText && voiceText.trim()) {
-      sendVoiceBtn.disabled = false;
-    }
-  };
-
-  recognition.onerror = (e) => {
-    console.warn('음성 인식 오류:', e.error);
-    // no-speech 오류 시에도 텍스트가 있으면 전송 버튼 활성화
-    if (voiceText && voiceText.trim()) {
-      sendVoiceBtn.disabled = false;
-    } else if (e.error !== 'no-speech') {
-      showVoiceText('인식 오류. 다시 시도해주세요. / Recognition error. Please try again.');
-    }
-  };
-
-  recognition.start();
-}
+/* ── 음성 입력 (Web Speech API, 선택된 언어로 인식) ── */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null, voiceText = '';
 
 function showVoiceText(text) {
   waveAnim.classList.add('hidden');
   recognizedText.textContent = text;
   recognizedText.classList.remove('hidden');
 }
-
-function cancelVoiceInput() {
-  if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
-  voiceText = '';
-  voiceModal.classList.add('hidden');
+function stopRecognition() {
+  if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
 }
-
-function sendVoiceInput() {
-  if (!voiceText.trim()) return;
-  if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
-  voiceModal.classList.add('hidden');
-
-  lastInputWasVoice = true;
-  addMessage('user_text', voiceText);
-
-  // 텍스트로 전송 → 서버에서 langdetect로 언어 감지 후 답변
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'text', data: voiceText }));
-    setInputsEnabled(false);
-  } else {
-    demoResponse(voiceText);
-  }
-
+function openVoice() {
+  if (busy) return;
+  if (!SR) { addBubble('system', App.t('voice_unsupported')); return; }
+  player.unlock(); player.stop();
   voiceText = '';
+  sendVoiceBtn.disabled = true;
+  recognizedText.textContent = '';
+  recognizedText.classList.add('hidden');
+  waveAnim.classList.remove('hidden');
+  $('langBadge').textContent = App.langLabel();
+  voiceModal.classList.remove('hidden');
+
+  recognition = new SR();
+  recognition.lang = App.speechCode();
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  recognition.onresult = e => {
+    let txt = '';
+    for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+    voiceText = txt;
+    showVoiceText(txt);
+    if (txt.trim()) sendVoiceBtn.disabled = false;
+  };
+  recognition.onerror = e => {
+    if (voiceText.trim() || e.error === 'aborted') return;
+    showVoiceText(e.error === 'not-allowed' || e.error === 'service-not-allowed' ? App.t('mic_denied') : App.t('voice_error'));
+  };
+  recognition.onend = () => { if (voiceText.trim()) sendVoiceBtn.disabled = false; };
+  try { recognition.start(); } catch (e) { showVoiceText(App.t('voice_error')); }
 }
+function closeVoice() { stopRecognition(); voiceModal.classList.add('hidden'); }
+function cancelVoice() { voiceText = ''; closeVoice(); }
 
-/* ──────────────────────────────────────────
-   초기화
-────────────────────────────────────────── */
-window.addEventListener('DOMContentLoaded', () => {
-  setInputsEnabled(false);
-  connectWebSocket();
-
-  textInput.addEventListener('keypress', e => {
-    if (e.key === 'Enter') sendTextMessage();
-  });
+micBtn.addEventListener('click', openVoice);
+$('cancelVoiceBtn').addEventListener('click', cancelVoice);
+$('closeVoiceBtn').addEventListener('click', cancelVoice);
+voiceModal.addEventListener('click', e => { if (e.target === voiceModal) cancelVoice(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !voiceModal.classList.contains('hidden')) cancelVoice(); });
+sendVoiceBtn.addEventListener('click', () => {
+  const text = voiceText;
+  player.unlock();
+  closeVoice();
+  voiceText = '';
+  ask(text, true);
 });
+
+/* ── 뒤로가기 / 길안내 링크 ── */
+function updateLinks() {
+  const home = TOUR_URL || App.homeUrl;
+  $('homeBtn').href = home;
+  $('routeLink').href = ROUTE_URL;
+}
+$('homeBtn').addEventListener('click', e => {
+  // 스탬프투어 등에서 들어온 경우 그 화면으로 되돌아감
+  if (document.referrer && window.history.length > 1) {
+    try {
+      if (new URL(document.referrer).origin === location.origin) { e.preventDefault(); window.history.back(); }
+    } catch (err) {}
+  }
+});
+
+window.addEventListener('langchange', () => {
+  renderLangs();
+  renderChips();
+  renderLocalText();
+  updatePlayUI();
+  addBubble('system', App.t('lang_changed', { lang: App.langLabel() }));
+});
+
+/* ── 초기화 ── */
+App.applyI18n();
+renderLangs();
+renderLocalText();
+updateLinks();
+App.mountInAppBanner($('bannerSlot'));
+addBubble('ai', App.t('chat_intro'));
+transcript.appendChild(chipsEl);   // 칩을 첫 인사 말풍선 바로 아래에 배치 (디자인)
+renderChips();
+updatePlayUI();
+
+const initialQ = new URLSearchParams(location.search).get('q');
+App.waitReady(() => addBubble('system', App.t('preparing')))
+  .then(({ waited }) => {
+    if (waited) addBubble('system', App.t('ready_msg'));
+    if (initialQ) ask(initialQ, false);
+  })
+  .catch(e => addBubble('system', e.code === 'init_failed' ? App.t('err_init') : App.t('err_net')));
 </script>
 </body>
 </html>
