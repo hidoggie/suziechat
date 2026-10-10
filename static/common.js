@@ -21,7 +21,7 @@
   /* ── UI 문구 (행사에 맞게 자유롭게 수정) ── */
   const T = {
     ko: {
-      app_title: 'AI 행사 안내봇',
+      app_title: '글로벌 AI 도슨트',
       welcome: '안녕하세요! 행사 안내봇입니다. 궁금한 것을 물어보시거나 행사장 간판을 비춰 보세요. 프로그램, 편의시설, 주변 맛집까지 안내해 드릴게요.',
       btn_chat: 'AI 안내 챗봇', btn_chat_sub: '음성·텍스트로 질문하기',
       btn_scan: '간판 스캔', btn_scan_sub: '간판을 비추면 정보를 알려드려요',
@@ -59,7 +59,7 @@
       home: '홈', chat: '챗봇', scan: '스캔',
     },
     en: {
-      app_title: 'AI Event Guide',
+      app_title: 'Global AI Docent',
       welcome: 'Hello! I am your event guide. Ask me anything, or point your camera at a sign at the venue. I can tell you about programs, facilities and places to eat nearby.',
       btn_chat: 'AI Guide Chat', btn_chat_sub: 'Ask by voice or text',
       btn_scan: 'Scan a Sign', btn_scan_sub: 'Point your camera at a sign',
@@ -97,7 +97,7 @@
       home: 'Home', chat: 'Chat', scan: 'Scan',
     },
     ja: {
-      app_title: 'AIイベント案内ボット',
+      app_title: 'グローバルAIドーセント',
       welcome: 'こんにちは！イベント案内ボットです。質問するか、会場の看板にカメラをかざしてください。プログラム、施設、周辺のグルメまでご案内します。',
       btn_chat: 'AI案内チャット', btn_chat_sub: '音声・テキストで質問',
       btn_scan: '看板スキャン', btn_scan_sub: '看板にカメラをかざしてください',
@@ -135,7 +135,7 @@
       home: 'ホーム', chat: 'チャット', scan: 'スキャン',
     },
     zh: {
-      app_title: 'AI活动导览',
+      app_title: '全球AI讲解员',
       welcome: '您好！我是活动导览机器人。您可以直接提问，或将相机对准会场的指示牌。我会为您介绍活动节目、便民设施和周边美食。',
       btn_chat: 'AI导览聊天', btn_chat_sub: '语音或文字提问',
       btn_scan: '扫描指示牌', btn_scan_sub: '将相机对准指示牌',
@@ -174,7 +174,7 @@
     },
     // 아래부터 베트남어(vi) 번역 블록 추가
     vi: {
-      app_title: 'Trợ lý AI sự kiện',
+      app_title: 'AI Docent toàn cầu',
       welcome: 'Xin chào! Tôi là trợ lý AI hướng dẫn sự kiện. Bạn có thể đặt câu hỏi hoặc hướng camera vào bảng hiệu tại hội trường. Tôi sẽ hướng dẫn bạn về các chương trình, tiện ích và địa điểm ăn uống lân cận.',
       btn_chat: 'Trò chuyện AI', btn_chat_sub: 'Hỏi bằng giọng nói/văn bản',
       btn_scan: 'Quét bảng hiệu', btn_scan_sub: 'Hướng camera để nhận thông tin',
@@ -434,11 +434,12 @@
   function mountInAppBanner(parent) {
     if (!parent || !isInApp()) return;
     const bar = document.createElement('div');
-    bar.className = 'flex items-center gap-2 bg-amber-100 text-amber-900 text-xs px-3 py-2';
+    bar.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 16px;background:#17171A;border-bottom:1px solid #2A2A30;color:#E4E4EA;font-size:13px;line-height:1.4;';
     const msg = document.createElement('span');
-    msg.className = 'flex-1';
+    msg.style.flex = '1';
     const btn = document.createElement('button');
-    btn.className = 'flex-shrink-0 bg-amber-500 text-white rounded-lg px-3 py-1.5 font-semibold';
+    btn.type = 'button';
+    btn.style.cssText = 'flex-shrink:0;height:32px;padding:0 12px;border-radius:999px;border:none;background:#F5FB20;color:#0A0A0B;font-weight:700;font-size:12px;font-family:inherit;';
     btn.addEventListener('click', openExternal);
     const update = () => { msg.textContent = t('inapp_msg'); btn.textContent = t('inapp_btn'); };
     update();
@@ -480,5 +481,6 @@
     apiUrl, apiGet, apiPost, errorText, renderText,
     TTSPlayer, mountInAppBanner, waitReady, formatTime,
     homeUrl: CFG.HOME_URL || '/',
+    routeUrl: CFG.ROUTE_URL || '',
   };
 })();

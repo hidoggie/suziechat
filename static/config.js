@@ -2,11 +2,13 @@
    배포 환경별 설정 (이 파일만 고치면 됨)
 ────────────────────────────────────────── */
 window.APP_CONFIG = {
-  // API 서버 주소. 페이지와 같은 서버면 '' 그대로.
-  // Node.js 메인 사이트에서 이 화면/JS를 불러 쓰면 'https://xxxx-event.onrender.com' 처럼 지정
-  // (이 경우 서버 환경변수 CORS_ORIGINS 에 메인 사이트 도메인을 추가해야 함)
-  API_BASE: '',
+  // API 서버 주소. suziechat 에서 열든 stechart 에 올려서 열든 이 서버로 요청합니다.
+  // (stechart 에서 부를 때는 서버의 CORS_ORIGINS 에 stechart 도메인이 있어야 함 — main.py 기본값에 포함)
+  API_BASE: 'https://suziechat.onrender.com',
 
-  // 홈 버튼 이동 경로. Node.js 메인에 붙이면 메인 주소로 변경
-  HOME_URL: '/',
+  // 뒤로가기 버튼: 이전 화면 기록이 없을 때 이동할 주소 (스탬프투어 메인)
+  HOME_URL: 'https://stechart.stampquest.kr/',
+
+  // 헤더 "길안내 받기" 버튼 주소
+  ROUTE_URL: 'https://stechart.stampquest.kr/index.html?view=venue',
 };

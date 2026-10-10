@@ -139,7 +139,7 @@
         <span class="mono">SYS-03 · AI DOCENT</span>
         <h1 id="dcTitle">글로벌 AI 도슨트</h1>
       </div>
-      <a id="routeLink" class="dc-route" href="/index.html?view=venue">
+      <a id="routeLink" class="dc-route" href="https://stechart.stampquest.kr/index.html?view=venue">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 18-7-4-7 4z"/></svg>
         <span id="routeLabel">길안내 받기</span>
       </a>
@@ -202,7 +202,7 @@
    TOUR_URL   : 이전 페이지 기록이 없을 때 뒤로가기 버튼이 갈 주소 (비워두면 App.homeUrl)
    ※ 작품/간판 스캔(AR 도슨트, /api/recognize-image) 기능은 이번 행사에서 제외했습니다. */
 const AVATAR_SRC = 'assets/docent-duck.png';
-const ROUTE_URL  = '/index.html?view=venue';
+const ROUTE_URL  = App.routeUrl || '/index.html?view=venue';   // config.js 의 ROUTE_URL 사용
 const TOUR_URL   = '';
 
 /* 디자인에서 새로 생긴 문구 (common.js 사전에 같은 키가 있으면 그쪽을 우선 사용) */
