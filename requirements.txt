@@ -1,9 +1,9 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
-pydantic>=2.5
+fastapi>=0.115
+uvicorn[standard]>=0.30
+gunicorn>=22.0
+pydantic>=2.7
 google-genai>=1.20
 google-cloud-texttospeech>=2.16
-PyMuPDF>=1.24
-Pillow>=10.0
+pymupdf>=1.24.3
 numpy>=1.26
-tzdata
+pillow>=10.3

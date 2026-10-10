@@ -89,7 +89,8 @@ FULL_CONTEXT_MAX_CHARS = _env_int("FULL_CONTEXT_MAX_CHARS", 40000)  # 이하면 
 TOP_K = _env_int("RAG_TOP_K", 4)
 SIM_THRESHOLD = _env_float("RAG_SIM_THRESHOLD", 0.55)  # 새 지식으로 테스트하며 조정
 
-CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+# 환경변수가 없으면 stechart 를 기본 허용 (다른 도메인에서 /api 호출 시 필요)
+CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "https://stechart.stampquest.kr").split(",") if o.strip()]
 RATE_LIMIT_PER_MIN = _env_int("RATE_LIMIT_PER_MIN", 30)
 MAX_QUESTION_CHARS = 300
 MAX_TTS_CHARS = 1200          # Google TTS 5000바이트 제한 대비 (한·중·일 1자 ≈ 3바이트)
