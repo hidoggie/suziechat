@@ -40,6 +40,7 @@
       mic_denied: '마이크 권한이 필요해요. 브라우저 설정에서 허용해 주세요.',
       voice_error: '음성을 알아듣지 못했어요. 다시 시도해 주세요.',
       tts_error: '음성을 재생하지 못했어요.',
+      tts_blocked: '소리를 켜지 못했어요. 버튼을 한 번 더 눌러 주세요.',
       lang_changed: '언어를 {lang}(으)로 바꿨어요.',
       chips: [
         { label: '행사 개요', q: '이번 행사를 간단히 소개해 주세요.' },
@@ -78,6 +79,7 @@
       mic_denied: 'Microphone permission is required. Please allow it in your browser settings.',
       voice_error: "Sorry, I didn't catch that. Please try again.",
       tts_error: 'Could not play the audio.',
+      tts_blocked: 'Could not start the audio. Please tap the button again.',
       lang_changed: 'Language changed to {lang}.',
       chips: [
         { label: 'About', q: 'Please give me a short introduction to this event.' },
@@ -116,6 +118,7 @@
       mic_denied: 'マイクの許可が必要です。ブラウザの設定で許可してください。',
       voice_error: '聞き取れませんでした。もう一度お試しください。',
       tts_error: '音声を再生できませんでした。',
+      tts_blocked: '音声を開始できませんでした。もう一度ボタンを押してください。',
       lang_changed: '言語を{lang}に変更しました。',
       chips: [
         { label: 'イベント概要', q: 'このイベントについて簡単に紹介してください。' },
@@ -154,6 +157,7 @@
       mic_denied: '需要麦克风权限，请在浏览器设置中允许。',
       voice_error: '没有听清，请再试一次。',
       tts_error: '无法播放语音。',
+      tts_blocked: '无法启动语音，请再点一次按钮。',
       lang_changed: '语言已切换为{lang}。',
       chips: [
         { label: '活动介绍', q: '请简单介绍一下这次活动。' },
@@ -193,6 +197,7 @@
       mic_denied: 'Cần có quyền truy cập micro. Vui lòng cho phép trong cài đặt trình duyệt.',
       voice_error: 'Không nghe rõ. Vui lòng thử lại.',
       tts_error: 'Không thể phát âm thanh.',
+      tts_blocked: 'Không thể bật âm thanh. Vui lòng nhấn nút thêm lần nữa.',
       lang_changed: 'Ngôn ngữ đã được chuyển sang {lang}.',
       chips: [
         { label: 'Giới thiệu', q: 'Hãy giới thiệu ngắn gọn về sự kiện này.' },
@@ -330,21 +335,61 @@
 
   /* ── TTS 플레이어 ──
      Web Audio 사용. unlock()을 반드시 '사용자 탭' 이벤트 안에서 먼저 호출해야
-     이후 비동기로 받은 음성도 iOS에서 재생됨. */
+     이후 비동기로 받은 음성도 iOS에서 재생됨.
+
+     ※ 모바일(특히 iOS)에서는 재생이 끝난 뒤나 음성 입력(마이크) 사용 후, 화면 잠금 후에
+       AudioContext 가 'suspended' 또는 'interrupted'(iOS 전용) 상태로 바뀝니다.
+       이 상태에서 start() 하면 소리 없이 '재생 중'으로만 표시되고(시계가 멈춰 끝나지도 않음),
+       나중에 화면을 다시 켜서 컨텍스트가 깨어나는 순간 갑자기 재생됩니다.
+       → 재생 전에 컨텍스트가 실제로 'running' 인지 확인하고, 안 되면 새로 만들고,
+         그래도 안 되면 '재생 중'으로 두지 않고 실패를 알립니다. */
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
   class TTSPlayer {
     constructor() {
       this.ctx = null; this.buffer = null; this.source = null;
       this.offset = 0; this.startedAt = 0; this.playing = false;
-      this.key = null; this.onstate = () => {}; this._raf = 0;
+      this.key = null; this.onstate = () => {}; this._raf = 0; this._watch = 0;
+      // 화면이 꺼지거나 다른 앱으로 가면 일시정지 (돌아왔을 때 갑자기 재생되지 않도록)
+      document.addEventListener('visibilitychange', () => { if (document.hidden) this.pause(); });
+      window.addEventListener('pagehide', () => this.pause());
     }
+    _newCtx() {
+      if (!AC) return null;
+      const ctx = new AC();
+      ctx.onstatechange = () => {
+        // 재생 도중 컨텍스트가 멈추면(전화·알림·화면 잠금 등) 일시정지 상태로 전환
+        if (ctx === this.ctx && ctx.state !== 'running' && this.playing) this._halt('pause');
+      };
+      return ctx;
+    }
+    /* 사용자 탭 안에서 호출: 컨텍스트 준비 + 깨우기 */
     unlock() {
       try {
-        if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if (this.ctx.state === 'suspended') this.ctx.resume();
+        const st = this.ctx && this.ctx.state;
+        if (!this.ctx || st === 'closed' || st === 'interrupted') {
+          // iOS 의 'interrupted' 컨텍스트는 resume() 으로 돌아오지 않는 경우가 많아 새로 만듦
+          //   (AudioBuffer 는 컨텍스트에 묶이지 않으므로 받아둔 음성은 그대로 재사용)
+          if (this.ctx && st !== 'closed') { const old = this.ctx; old.onstatechange = null; try { old.close(); } catch (e) {} }
+          this._stopSource();
+          this.playing = false;
+          this.ctx = this._newCtx();
+        }
+        if (!this.ctx) return;
+        if (this.ctx.state !== 'running') { const r = this.ctx.resume(); if (r && r.catch) r.catch(() => {}); }
         const b = this.ctx.createBuffer(1, 1, 22050);
         const s = this.ctx.createBufferSource();
         s.buffer = b; s.connect(this.ctx.destination); s.start(0);
       } catch (e) {}
+    }
+    async _ensureRunning() {
+      if (!this.ctx) this.unlock();
+      const ctx = this.ctx;
+      if (!ctx) return false;
+      if (ctx.state === 'running') return true;
+      try { await Promise.race([ctx.resume(), wait(800)]); } catch (e) {}
+      return ctx.state === 'running';
     }
     get duration() { return this.buffer ? this.buffer.duration : 0; }
     get currentTime() {
@@ -358,34 +403,61 @@
       this.stop(); this.buffer = null; this.key = key;
       const data = await apiPost('/api/tts', { text, lang }, 30000);
       const bin = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
-      const buf = await this.ctx.decodeAudioData(bin.buffer);
+      const buf = await new Promise((resolve, reject) => {
+        // 구형 Safari 는 콜백 방식만 지원
+        const p = this.ctx.decodeAudioData(bin.buffer, resolve, reject);
+        if (p && p.then) p.then(resolve, reject);
+      });
       if (this.key !== key) return;
       this.buffer = buf; this.offset = 0;
       this._emit('loaded');
     }
-    play() {
-      if (!this.buffer) return;
-      if (this.ctx.state === 'suspended') this.ctx.resume();
+    /* 재생 시작. 실제로 소리가 나기 시작하면 true, 오디오가 막혀 있으면 false */
+    async play() {
+      if (!this.buffer) return false;
+      if (!(await this._ensureRunning())) {
+        this.playing = false;
+        this._emit('blocked');
+        return false;
+      }
+      const ctx = this.ctx;
       this._stopSource();
       if (this.offset >= this.duration - 0.05) this.offset = 0;
-      const s = this.ctx.createBufferSource();
+      const s = ctx.createBufferSource();
       s.buffer = this.buffer;
-      s.connect(this.ctx.destination);
+      s.connect(ctx.destination);
       s.start(0, this.offset);
-      this.startedAt = this.ctx.currentTime - this.offset;
+      this.startedAt = ctx.currentTime - this.offset;
       s.onended = () => {
         if (this.source !== s) return;
+        clearTimeout(this._watch);
         this.source = null; this.playing = false; this.offset = 0;
         this._emit('ended');
       };
       this.source = s; this.playing = true;
       this._emit('play'); this._tick();
+
+      // 안전장치: 'running' 이라고 나와도 오디오 시계가 멈춰 있으면(일부 iOS) 재생 실패로 처리
+      const t0 = ctx.currentTime;
+      clearTimeout(this._watch);
+      this._watch = setTimeout(() => {
+        if (this.playing && this.source === s && ctx.currentTime === t0) {
+          this._halt('blocked');
+          try { ctx.onstatechange = null; ctx.close(); } catch (e) {}
+          if (this.ctx === ctx) this.ctx = null;   // 다음 탭에서 새 컨텍스트로 다시 시도
+        }
+      }, 1500);
+      return true;
     }
     pause() {
       if (!this.playing) return;
+      this._halt('pause');
+    }
+    _halt(ev) {
       this.offset = this.currentTime;
+      clearTimeout(this._watch);
       this._stopSource(); this.playing = false;
-      this._emit('pause');
+      this._emit(ev);
     }
     seek(t) {
       if (!this.buffer) return;
@@ -394,12 +466,13 @@
       this.offset = Math.max(0, Math.min(t, this.duration));
       if (was) this.play(); else this._emit('seek');
     }
-    stop() { this._stopSource(); this.playing = false; this.offset = 0; this._emit('stop'); }
+    stop() { clearTimeout(this._watch); this._stopSource(); this.playing = false; this.offset = 0; this._emit('stop'); }
     reset() { this.stop(); this.buffer = null; this.key = null; }
     _stopSource() {
       if (this.source) {
         this.source.onended = null;
         try { this.source.stop(); } catch (e) {}
+        try { this.source.disconnect(); } catch (e) {}
         this.source = null;
       }
     }

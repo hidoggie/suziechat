@@ -335,7 +335,9 @@ async function playLast() {
       ttsLoading = true; updatePlayUI();
       await player.load(last.text, last.lang);
     }
-    player.play();
+    // 오디오가 막혀 있으면(모바일 절전·음성 입력 직후 등) '재생 중'으로 두지 않고 안내
+    const ok = await player.play();
+    if (!ok) addBubble('system', App.t('tts_blocked'));
   } catch (e) {
     console.warn('TTS 실패', e);
     addBubble('system', e.status === 429 ? App.t('err_rate') : App.t('tts_error'));
