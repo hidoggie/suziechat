@@ -65,7 +65,7 @@ EMBED_CACHE_PATH = BASE_DIR / ".embedding_cache.json"
 
 # 지식 파일: .pdf / .md / .txt  (기존 KNOWLEDGE_PDF_PATH 이름도 호환)
 KNOWLEDGE_PATH = BASE_DIR / os.environ.get(
-    "KNOWLEDGE_PATH", os.environ.get("KNOWLEDGE_PDF_PATH", "knowledge.pdf")
+    "KNOWLEDGE_PATH", os.environ.get("KNOWLEDGE_PDF_PATH", "knowledge.txt")
 )
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
