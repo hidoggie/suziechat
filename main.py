@@ -88,6 +88,9 @@ EVENT_TZ = os.environ.get("EVENT_TZ", "Asia/Seoul")
 FULL_CONTEXT_MAX_CHARS = _env_int("FULL_CONTEXT_MAX_CHARS", 40000)  # 이하면 지식 전체를 컨텍스트로
 TOP_K = _env_int("RAG_TOP_K", 4)
 SIM_THRESHOLD = _env_float("RAG_SIM_THRESHOLD", 0.55)  # 새 지식으로 테스트하며 조정
+# 자동 절약 모드: 최근 1분 토큰 사용량이 예산의 이 비율을 넘으면, 그동안만 '관련 부분만 보내기(top-k)'로 자동 전환
+#   평소엔 지식 전체를 보내 풍부하게 답하고, 몰릴 때만 질문당 토큰을 줄여 처리량을 늘림. 0 이면 끔.
+AUTO_RAG_RATIO = _env_float("AUTO_RAG_RATIO", 0.6)
 
 # 환경변수가 없으면 stechart 를 기본 허용 (다른 도메인에서 /api 호출 시 필요)
 CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "https://stechart.stampquest.kr").split(",") if o.strip()]
@@ -574,7 +577,12 @@ async def initialize():
             print(f"   [#{s['id']}] {s['title'][:60]}  (키워드 {len(s['keywords'])}, 이미지 {len(s['images'])})")
 
         if S.use_full_context:
-            print("🧠 검색 방식: 전체 컨텍스트 (지식이 작아 임베딩 생략)")
+            print("🧠 검색 방식: 전체 컨텍스트" + (f" (혼잡 시 자동 top-k, 기준 {AUTO_RAG_RATIO:.0%})" if AUTO_RAG_RATIO > 0 else ""))
+            if AUTO_RAG_RATIO > 0 and len(S.sections) > TOP_K:
+                try:
+                    await _build_embeddings()   # 혼잡 시 자동 전환용 (실패해도 키워드 검색으로 대체)
+                except Exception as e:
+                    print(f"⚠️ 자동 절약용 임베딩 실패 → 혼잡 시 키워드 검색 사용: {e}")
         else:
             print("🧠 검색 방식: 임베딩 top-k")
             await _build_embeddings()
@@ -691,6 +699,9 @@ async def config():
         "tts": S.tts is not None,
         "sections": len(S.sections),
         "mode": "full" if S.use_full_context else "rag",
+        "auto_lite": AUTO_RAG_RATIO > 0 and S.use_full_context,
+        "tpm_used": _tok_used(time.monotonic()),
+        "tpm_budget": TPM_BUDGET,
     }
 
 
@@ -704,7 +715,12 @@ async def chat(req: ChatReq, request: Request):
         raise HTTPException(status_code=400, detail="empty_message")
     history = [h for h in req.history[-6:] if h.role in ("user", "assistant")]
 
-    if S.use_full_context:
+    lite = False
+    if S.use_full_context and AUTO_RAG_RATIO > 0 and len(S.sections) > TOP_K:
+        lite = _tok_used(time.monotonic()) >= TPM_BUDGET * AUTO_RAG_RATIO
+        if lite:
+            print("🪶 혼잡 → 절약 모드(관련 부분만)로 답변")
+    if S.use_full_context and not lite:
         context = S.full_context
     else:
         last_user = next((h.text for h in reversed(history) if h.role == "user"), "")
