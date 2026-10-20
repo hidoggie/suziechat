@@ -70,9 +70,14 @@ KNOWLEDGE_PATH = BASE_DIR / os.environ.get(
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 CHAT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-# 예비 모델: 기본 모델이 하루 한도(RPD)를 다 쓰거나 분당 한도가 꽉 찼을 때 대신 답함. 빈 값이면 끔.
-#   Tier 1 기준 gemini-2.5-flash-lite = 분당 4,000건 · 400만 토큰 · 하루 무제한
-FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite").strip()
+# 예비 모델: 기본 모델이 하루 한도(RPD)를 다 쓰거나, 분당 한도가 꽉 차거나, 일시 장애(503)일 때 대신 답함.
+#   쉼표로 여러 개 지정 가능(앞에서부터 시도). 빈 값이면 끔.
+#   ※ gemini-2.5-flash-lite 는 새 사용자에게 막혀 있음(404)
+#   Tier 1 한도: 3.5 Flash-Lite · 3.1 Flash-Lite 각각 분당 4,000건 · 400만 토큰 · 하루 15만 건 (한도는 모델별로 따로)
+FALLBACK_MODELS = [m.strip() for m in os.environ.get(
+    "GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite,gemini-3.1-flash-lite").split(",") if m.strip()]
+FALLBACK_MODEL = ",".join(FALLBACK_MODELS)   # 켜짐 여부 표시용
+_fb_dead: set = set()                        # 404 등으로 쓸 수 없는 것으로 확인된 예비 모델
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "gemini-embedding-001")
 EMBED_DIM = 768
 GEMINI_TIMEOUT = _env_int("GEMINI_TIMEOUT", 40)
@@ -337,12 +342,21 @@ def build_catalog(sections: list[dict]) -> str:
 # 4. Gemini / 임베딩 헬퍼
 # ══════════════════════════════════════════════════════════════
 def _gen_config(system: str | None = None, max_tokens: int = 1024,
-                json_mode: bool = False, temperature: float = 0.4) -> types.GenerateContentConfig:
+                json_mode: bool = False, temperature: float = 0.4,
+                model: str | None = None, thinking: bool = True) -> types.GenerateContentConfig:
     kw = dict(system_instruction=system, max_output_tokens=max_tokens, temperature=temperature)
     if json_mode:
         kw["response_mime_type"] = "application/json"
-    if THINKING_BUDGET is not None:
-        kw["thinking_config"] = types.ThinkingConfig(thinking_budget=THINKING_BUDGET)
+    m = model or CHAT_MODEL
+    if thinking and THINKING_BUDGET is not None:
+        if m.startswith("gemini-2.5"):
+            kw["thinking_config"] = types.ThinkingConfig(thinking_budget=THINKING_BUDGET)
+        elif THINKING_BUDGET == 0:
+            # 3.x 계열은 thinking_budget 대신 thinking_level 사용 (SDK 가 모르면 생략)
+            try:
+                kw["thinking_config"] = types.ThinkingConfig(thinking_level="minimal")
+            except Exception:
+                pass
     return types.GenerateContentConfig(**kw)
 
 
@@ -402,44 +416,86 @@ def _is_daily_quota(msg: str) -> bool:
     return bool(re.search(r"per_?day|perday|requests per day|daily", msg, re.I))
 
 
-async def _gemini_fallback(contents: list, kw: dict, why: str) -> str:
-    global _fb_count
-    _fb_count += 1
-    print(f"🔀 예비 모델({FALLBACK_MODEL})로 답변 — {why}")
-    for attempt in range(2):
+async def _check_fallbacks():
+    """기동 시 예비 모델이 실제로 응답하는지 아주 짧게 확인 (안 되면 미리 제외하고 로그로 알림)"""
+    for model in FALLBACK_MODELS:
         try:
-            resp = await asyncio.wait_for(
-                S.client.aio.models.generate_content(model=FALLBACK_MODEL, contents=contents, config=_gen_config(**kw)),
-                timeout=GEMINI_TIMEOUT,
-            )
-            return (resp.text or "").strip()
+            await _call_model(model, ["ping"], {"max_tokens": 16})
+            print(f"✅ 예비 모델 확인: {model}")
         except Exception as e:
             msg = str(e)
-            if attempt == 0 and any(k in msg for k in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "overloaded")):
-                await asyncio.sleep(2)
-                continue
-            raise
+            if "404" in msg or "NOT_FOUND" in msg or "PERMISSION_DENIED" in msg:
+                _fb_dead.add(model)
+            print(f"⚠️ 예비 모델 확인 실패: {model} — {msg[:150]}")
+
+
+_BUSY_KEYS = ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "overloaded", "500", "INTERNAL")
+
+
+async def _call_model(model: str, contents: list, kw: dict):
+    """모델 호출. 3.x 모델이 thinking 설정을 거부(400)하면 설정 없이 한 번 더"""
+    try:
+        return await asyncio.wait_for(
+            S.client.aio.models.generate_content(model=model, contents=contents, config=_gen_config(model=model, **kw)),
+            timeout=GEMINI_TIMEOUT,
+        )
+    except Exception as e:
+        msg = str(e)
+        if "400" in msg and "think" in msg.lower():
+            return await asyncio.wait_for(
+                S.client.aio.models.generate_content(
+                    model=model, contents=contents, config=_gen_config(model=model, thinking=False, **kw)),
+                timeout=GEMINI_TIMEOUT,
+            )
+        raise
+
+
+async def _gemini_fallback(contents: list, kw: dict, why: str, primary_ok: bool = True) -> str:
+    """예비 모델들을 차례로 시도 → 다 안 되면(기본 모델이 쓸 수 있는 상태라면) 기본 모델로 한 번 더"""
+    global _fb_count
+    last: Exception | None = None
+    for model in [m for m in FALLBACK_MODELS if m not in _fb_dead]:
+        for attempt in range(2):
+            try:
+                resp = await _call_model(model, contents, kw)
+                _fb_count += 1
+                print(f"🔀 예비 모델({model})로 답변 — {why}")
+                return (resp.text or "").strip()
+            except Exception as e:
+                last = e
+                msg = str(e)
+                if "404" in msg or "NOT_FOUND" in msg or "PERMISSION_DENIED" in msg:
+                    _fb_dead.add(model)
+                    print(f"⚠️ 예비 모델 {model} 사용 불가 → 제외: {msg[:120]}")
+                    break
+                if attempt == 0 and any(k in msg for k in _BUSY_KEYS):
+                    await asyncio.sleep(1.5)
+                    continue
+                break
+    if primary_ok:
+        await asyncio.sleep(1.5)
+        resp = await _call_model(CHAT_MODEL, contents, kw)
+        return (resp.text or "").strip()
+    raise last or RuntimeError("no_fallback_model")
 
 
 async def gemini(contents: list, **kw) -> str:
     global _tok_per_char, _primary_off_until
     if FALLBACK_MODEL and time.time() < _primary_off_until:
-        return await _gemini_fallback(contents, kw, "기본 모델 하루 한도 소진")
+        return await _gemini_fallback(contents, kw, "기본 모델 하루 한도 소진", primary_ok=False)
     chars = _contents_chars(contents, kw.get("system"))
     # 사람이 몰려 Gemini 가 일시적으로 거절(429 요청 한도 / 503 과부하)하면 예비 모델로, 예비 모델이 없으면 잠깐 쉬었다가 한 번 더
     for attempt in range(2):
+        has_fb = any(m not in _fb_dead for m in FALLBACK_MODELS)
         try:
             # 예비 모델이 있으면 오래 기다리지 않고(최대 2초) 바로 예비 모델로
-            entry = await _reserve_tokens(int(chars * _tok_per_char), min(TPM_MAX_WAIT, 2) if FALLBACK_MODEL else None)
+            entry = await _reserve_tokens(int(chars * _tok_per_char), min(TPM_MAX_WAIT, 2) if has_fb else None)
         except GeminiBusy:
-            if FALLBACK_MODEL:
-                return await _gemini_fallback(contents, kw, "분당 토큰 한도 꽉 참")
+            if has_fb:
+                return await _gemini_fallback(contents, kw, "분당 토큰 한도 꽉 참", primary_ok=False)
             raise
         try:
-            resp = await asyncio.wait_for(
-                S.client.aio.models.generate_content(model=CHAT_MODEL, contents=contents, config=_gen_config(**kw)),
-                timeout=GEMINI_TIMEOUT,
-            )
+            resp = await _call_model(CHAT_MODEL, contents, kw)
             used = getattr(getattr(resp, "usage_metadata", None), "prompt_token_count", None)
             if used:
                 entry[1] = int(used)                                  # 추정치를 실제 사용량으로 교체
@@ -447,13 +503,13 @@ async def gemini(contents: list, **kw) -> str:
             return (resp.text or "").strip()
         except Exception as e:
             msg = str(e)
-            busy = any(k in msg for k in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "overloaded"))
-            if busy and FALLBACK_MODEL:
+            busy = any(k in msg for k in _BUSY_KEYS) or isinstance(e, asyncio.TimeoutError)
+            if busy and any(m not in _fb_dead for m in FALLBACK_MODELS):
                 if ("429" in msg or "RESOURCE_EXHAUSTED" in msg) and _is_daily_quota(msg):
                     _primary_off_until = _next_quota_reset()
                     print(f"🛑 기본 모델 하루 한도 소진 → {datetime.fromtimestamp(_primary_off_until, ZoneInfo(EVENT_TZ)):%m/%d %H:%M} 까지 예비 모델 사용")
-                    return await _gemini_fallback(contents, kw, "기본 모델 하루 한도 소진")
-                return await _gemini_fallback(contents, kw, msg[:60])
+                    return await _gemini_fallback(contents, kw, "기본 모델 하루 한도 소진", primary_ok=False)
+                return await _gemini_fallback(contents, kw, (msg or type(e).__name__)[:60], primary_ok=attempt == 0)
             if attempt == 0 and busy:
                 print(f"⏳ Gemini 혼잡 → 재시도: {msg[:80]}")
                 await asyncio.sleep(3 if "429" in msg or "RESOURCE_EXHAUSTED" in msg else 1.5)
@@ -640,6 +696,7 @@ async def initialize():
             await _build_embeddings()
 
         S.ready = True
+        asyncio.create_task(_check_fallbacks())
         print("🎉 초기화 완료")
     except Exception as e:
         S.error = f"[{type(e).__name__}] {e}"
@@ -754,7 +811,8 @@ async def config():
         "auto_lite": AUTO_RAG_RATIO > 0 and S.use_full_context,
         "tpm_used": _tok_used(time.monotonic()),
         "tpm_budget": TPM_BUDGET,
-        "fallback_model": FALLBACK_MODEL or None,
+        "fallback_model": [m for m in FALLBACK_MODELS if m not in _fb_dead] or None,
+        "fallback_dead": sorted(_fb_dead) or None,
         "fallback_answers": _fb_count,
         "primary_daily_exhausted": time.time() < _primary_off_until,
     }
