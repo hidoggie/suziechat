@@ -21,7 +21,7 @@ import shutil
 import time
 from collections import OrderedDict, defaultdict, deque
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -70,6 +70,9 @@ KNOWLEDGE_PATH = BASE_DIR / os.environ.get(
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 CHAT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# 예비 모델: 기본 모델이 하루 한도(RPD)를 다 쓰거나 분당 한도가 꽉 찼을 때 대신 답함. 빈 값이면 끔.
+#   Tier 1 기준 gemini-2.5-flash-lite = 분당 4,000건 · 400만 토큰 · 하루 무제한
+FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite").strip()
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "gemini-embedding-001")
 EMBED_DIM = 768
 GEMINI_TIMEOUT = _env_int("GEMINI_TIMEOUT", 40)
@@ -361,8 +364,8 @@ class GeminiBusy(Exception):
     """분당 토큰 한도가 꽉 차서 잠시 후 다시 시도해야 하는 상태"""
 
 
-async def _reserve_tokens(est: int) -> list:
-    deadline = time.monotonic() + TPM_MAX_WAIT
+async def _reserve_tokens(est: int, max_wait: float | None = None) -> list:
+    deadline = time.monotonic() + (TPM_MAX_WAIT if max_wait is None else max_wait)
     while True:
         async with _tok_lock:
             now = time.monotonic()
@@ -383,12 +386,55 @@ def _contents_chars(contents: list, system: str | None) -> int:
     return n
 
 
-async def gemini(contents: list, **kw) -> str:
-    global _tok_per_char
-    chars = _contents_chars(contents, kw.get("system"))
-    # 사람이 몰려 Gemini 가 일시적으로 거절(429 요청 한도 / 503 과부하)하면 잠깐 쉬었다가 한 번 더
+_primary_off_until = 0.0   # 기본 모델 하루 한도 소진 시, 한도가 초기화되는 시각(epoch)까지 예비 모델 사용
+_fb_count = 0
+
+
+def _next_quota_reset() -> float:
+    """Gemini 하루 한도는 미국 태평양 시간 자정에 초기화 (한국 시간 오후 4시, 서머타임 해제 후 오후 5시)"""
+    tz = ZoneInfo("America/Los_Angeles")
+    now = datetime.now(tz)
+    nxt = (now + timedelta(days=1)).replace(hour=0, minute=1, second=0, microsecond=0)
+    return nxt.timestamp()
+
+
+def _is_daily_quota(msg: str) -> bool:
+    return bool(re.search(r"per_?day|perday|requests per day|daily", msg, re.I))
+
+
+async def _gemini_fallback(contents: list, kw: dict, why: str) -> str:
+    global _fb_count
+    _fb_count += 1
+    print(f"🔀 예비 모델({FALLBACK_MODEL})로 답변 — {why}")
     for attempt in range(2):
-        entry = await _reserve_tokens(int(chars * _tok_per_char))
+        try:
+            resp = await asyncio.wait_for(
+                S.client.aio.models.generate_content(model=FALLBACK_MODEL, contents=contents, config=_gen_config(**kw)),
+                timeout=GEMINI_TIMEOUT,
+            )
+            return (resp.text or "").strip()
+        except Exception as e:
+            msg = str(e)
+            if attempt == 0 and any(k in msg for k in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "overloaded")):
+                await asyncio.sleep(2)
+                continue
+            raise
+
+
+async def gemini(contents: list, **kw) -> str:
+    global _tok_per_char, _primary_off_until
+    if FALLBACK_MODEL and time.time() < _primary_off_until:
+        return await _gemini_fallback(contents, kw, "기본 모델 하루 한도 소진")
+    chars = _contents_chars(contents, kw.get("system"))
+    # 사람이 몰려 Gemini 가 일시적으로 거절(429 요청 한도 / 503 과부하)하면 예비 모델로, 예비 모델이 없으면 잠깐 쉬었다가 한 번 더
+    for attempt in range(2):
+        try:
+            # 예비 모델이 있으면 오래 기다리지 않고(최대 2초) 바로 예비 모델로
+            entry = await _reserve_tokens(int(chars * _tok_per_char), min(TPM_MAX_WAIT, 2) if FALLBACK_MODEL else None)
+        except GeminiBusy:
+            if FALLBACK_MODEL:
+                return await _gemini_fallback(contents, kw, "분당 토큰 한도 꽉 참")
+            raise
         try:
             resp = await asyncio.wait_for(
                 S.client.aio.models.generate_content(model=CHAT_MODEL, contents=contents, config=_gen_config(**kw)),
@@ -402,6 +448,12 @@ async def gemini(contents: list, **kw) -> str:
         except Exception as e:
             msg = str(e)
             busy = any(k in msg for k in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "overloaded"))
+            if busy and FALLBACK_MODEL:
+                if ("429" in msg or "RESOURCE_EXHAUSTED" in msg) and _is_daily_quota(msg):
+                    _primary_off_until = _next_quota_reset()
+                    print(f"🛑 기본 모델 하루 한도 소진 → {datetime.fromtimestamp(_primary_off_until, ZoneInfo(EVENT_TZ)):%m/%d %H:%M} 까지 예비 모델 사용")
+                    return await _gemini_fallback(contents, kw, "기본 모델 하루 한도 소진")
+                return await _gemini_fallback(contents, kw, msg[:60])
             if attempt == 0 and busy:
                 print(f"⏳ Gemini 혼잡 → 재시도: {msg[:80]}")
                 await asyncio.sleep(3 if "429" in msg or "RESOURCE_EXHAUSTED" in msg else 1.5)
@@ -702,6 +754,9 @@ async def config():
         "auto_lite": AUTO_RAG_RATIO > 0 and S.use_full_context,
         "tpm_used": _tok_used(time.monotonic()),
         "tpm_budget": TPM_BUDGET,
+        "fallback_model": FALLBACK_MODEL or None,
+        "fallback_answers": _fb_count,
+        "primary_daily_exhausted": time.time() < _primary_off_until,
     }
 
 
