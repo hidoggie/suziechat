@@ -91,7 +91,8 @@ SIM_THRESHOLD = _env_float("RAG_SIM_THRESHOLD", 0.55)  # 새 지식으로 테스
 
 # 환경변수가 없으면 stechart 를 기본 허용 (다른 도메인에서 /api 호출 시 필요)
 CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "https://stechart.stampquest.kr").split(",") if o.strip()]
-RATE_LIMIT_PER_MIN = _env_int("RATE_LIMIT_PER_MIN", 30)
+# 같은 통신사 공용 IP(CGNAT)를 여러 관람객이 함께 쓰는 경우가 많아 넉넉하게 (축제 현장 대비)
+RATE_LIMIT_PER_MIN = _env_int("RATE_LIMIT_PER_MIN", 90)
 MAX_QUESTION_CHARS = 300
 MAX_TTS_CHARS = 1200          # Google TTS 5000바이트 제한 대비 (한·중·일 1자 ≈ 3바이트)
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -336,11 +337,22 @@ def _gen_config(system: str | None = None, max_tokens: int = 1024,
 
 
 async def gemini(contents: list, **kw) -> str:
-    resp = await asyncio.wait_for(
-        S.client.aio.models.generate_content(model=CHAT_MODEL, contents=contents, config=_gen_config(**kw)),
-        timeout=GEMINI_TIMEOUT,
-    )
-    return (resp.text or "").strip()
+    # 사람이 몰려 Gemini 가 일시적으로 거절(429 요청 한도 / 503 과부하)하면 잠깐 쉬었다가 한 번 더
+    for attempt in range(2):
+        try:
+            resp = await asyncio.wait_for(
+                S.client.aio.models.generate_content(model=CHAT_MODEL, contents=contents, config=_gen_config(**kw)),
+                timeout=GEMINI_TIMEOUT,
+            )
+            return (resp.text or "").strip()
+        except Exception as e:
+            msg = str(e)
+            busy = any(k in msg for k in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "overloaded"))
+            if attempt == 0 and busy:
+                print(f"⏳ Gemini 혼잡 → 재시도: {msg[:80]}")
+                await asyncio.sleep(1.5)
+                continue
+            raise
 
 
 async def embed_texts(texts: list[str], task: str) -> np.ndarray:
@@ -554,11 +566,12 @@ def _client_ip(request: Request) -> str:
     return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?")
 
 
-def check_rate(request: Request):
+def check_rate(request: Request, bucket: str = "chat"):
+    """IP당 분당 요청 제한. chat / tts / image 를 따로 셈 (질문 1개 = chat 1회 + tts 1회라 함께 세면 금방 참)"""
     now = time.monotonic()
     if len(_hits) > 20000:
         _hits.clear()
-    dq = _hits[_client_ip(request)]
+    dq = _hits[f"{bucket}|{_client_ip(request)}"]
     while dq and now - dq[0] > 60:
         dq.popleft()
     if len(dq) >= RATE_LIMIT_PER_MIN:
@@ -654,11 +667,12 @@ async def chat(req: ChatReq, request: Request):
         f"{'Visitor' if h.role == 'user' else 'Guide'}: {h.text[:300]}" for h in history
     ) or "(none)"
     name = _lang_name(lang)
-    prompt = f"""[Target language] {name}
-[Current time] {now_str()} ({EVENT_TZ})
-
-[Reference]
+    # 바뀌지 않는 [Reference] 를 맨 앞에 둬야 Gemini 자동 캐시가 적중 (같은 앞부분이 반복되면 입력 토큰 할인 · 응답도 빨라짐)
+    prompt = f"""[Reference]
 {context}
+
+[Target language] {name}
+[Current time] {now_str()} ({EVENT_TZ})
 
 [Recent conversation]
 {hist_text}
@@ -702,7 +716,7 @@ _tts_cache: "OrderedDict[str, str]" = OrderedDict()
 
 @app.post("/api/tts")
 async def tts(req: TTSReq, request: Request):
-    check_rate(request)
+    check_rate(request, "tts")
     if not S.tts:
         raise HTTPException(status_code=503, detail="tts_unavailable")
     text = (req.text or req.text_to_speak).strip()[:MAX_TTS_CHARS]
@@ -751,7 +765,7 @@ def _prepare_image(data: str) -> bytes:
 
 @app.post("/api/recognize-image")
 async def recognize_image(req: ImageReq, request: Request):
-    check_rate(request)
+    check_rate(request, "image")
     ensure_ready()
     lang = norm_lang(req.lang)
     name = _lang_name(lang)
