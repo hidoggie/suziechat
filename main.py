@@ -715,22 +715,7 @@ async def chat(req: ChatReq, request: Request):
         raise HTTPException(status_code=400, detail="empty_message")
     history = [h for h in req.history[-6:] if h.role in ("user", "assistant")]
 
-    lite = False
-    if S.use_full_context and AUTO_RAG_RATIO > 0 and len(S.sections) > TOP_K:
-        lite = _tok_used(time.monotonic()) >= TPM_BUDGET * AUTO_RAG_RATIO
-        if lite:
-            print("🪶 혼잡 → 절약 모드(관련 부분만)로 답변")
-    if S.use_full_context and not lite:
-        context = S.full_context
-    else:
-        last_user = next((h.text for h in reversed(history) if h.role == "user"), "")
-        secs = await retrieve(f"{last_user}\n{message}" if last_user else message)
-        if secs:
-            context = "\n\n".join(section_block(s) for s in secs)
-        else:
-            context = section_block(S.sections[0]) + "\n\n(No closely related section. Available topics:)\n" + S.catalog
-
-    # ── 같은 질문 답변 재사용 ──
+    # ── 같은 질문 답변 재사용 ── (저장된 답이 있으면 검색·Gemini 호출 없이 바로 응답)
     #   같은 언어 · 같은 질문(공백·문장부호 무시) · 같은 직전 대화면 ANSWER_CACHE_SEC 동안 저장된 답을 그대로 돌려줌
     #   (동시에 같은 질문이 들어오면 Gemini 는 한 번만 부르고 나머지는 그 결과를 같이 받음)
     last_ans = next((h.text for h in reversed(history) if h.role == "assistant"), "")
@@ -747,7 +732,7 @@ async def chat(req: ChatReq, request: Request):
         fut = asyncio.get_running_loop().create_future()
         _ans_inflight[ckey] = fut
         try:
-            result = await _chat_answer(lang, message, history, context)
+            result = await _chat_answer(lang, message, history)
             _ans_cache[ckey] = (time.monotonic(), result)
             if len(_ans_cache) > 2000:
                 for k in list(_ans_cache)[:500]:
@@ -760,14 +745,29 @@ async def chat(req: ChatReq, request: Request):
             raise
         finally:
             _ans_inflight.pop(ckey, None)
-    return await _chat_answer(lang, message, history, context)
+    return await _chat_answer(lang, message, history)
+
+
+async def _build_context(message: str, history: list) -> tuple[str, bool]:
+    """(컨텍스트, 절약모드 여부) — 평소엔 지식 전체, 혼잡하거나 지식이 크면 관련 섹션만"""
+    lite = False
+    if S.use_full_context and AUTO_RAG_RATIO > 0 and len(S.sections) > TOP_K:
+        lite = _tok_used(time.monotonic()) >= TPM_BUDGET * AUTO_RAG_RATIO
+    if S.use_full_context and not lite:
+        return S.full_context, False
+    last_user = next((h.text for h in reversed(history) if h.role == "user"), "")
+    secs = await retrieve(f"{last_user}\n{message}" if last_user else message)
+    if secs:
+        return "\n\n".join(section_block(s) for s in secs), lite
+    return section_block(S.sections[0]) + "\n\n(No closely related section. Available topics:)\n" + S.catalog, lite
 
 
 _ans_cache: dict = {}        # 키 → (저장 시각, 응답)
 _ans_inflight: dict = {}     # 키 → 진행 중인 Future
 
 
-async def _chat_answer(lang: str, message: str, history: list, context: str) -> dict:
+async def _chat_answer(lang: str, message: str, history: list) -> dict:
+    context, lite = await _build_context(message, history)
     hist_text = "\n".join(
         f"{'Visitor' if h.role == 'user' else 'Guide'}: {h.text[:300]}" for h in history
     ) or "(none)"
@@ -810,7 +810,7 @@ Respond as JSON: {{"answer": "<reply in {name}>", "used_ids": [<ids of the refer
         if 0 <= i < len(S.sections) and S.sections[i] not in used:
             used.append(S.sections[i])
 
-    print(f"💬 [{lang}] {message[:40]} → 섹션 {[s['id'] for s in used]}")
+    print(f"💬 [{lang}] {message[:40]} → 섹션 {[s['id'] for s in used]}" + (" 🪶절약" if lite else ""))
     return {
         "text": answer,
         "lang": lang,
