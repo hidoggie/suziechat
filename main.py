@@ -94,6 +94,10 @@ CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "https://stech
 # 같은 통신사 공용 IP(CGNAT)를 여러 관람객이 함께 쓰는 경우가 많아 넉넉하게 (축제 현장 대비)
 RATE_LIMIT_PER_MIN = _env_int("RATE_LIMIT_PER_MIN", 90)
 MAX_QUESTION_CHARS = 300
+# Gemini 분당 입력 토큰 한도(유료 Tier 1: gemini-2.5-flash 1,000,000) 보다 조금 낮게 → 넘을 것 같으면 잠깐 기다렸다 보냄
+TPM_BUDGET = _env_int("GEMINI_TPM_BUDGET", 900000)
+TPM_MAX_WAIT = _env_int("GEMINI_TPM_MAX_WAIT", 8)         # 최대 대기(초) — 그래도 자리가 없으면 Gemini 를 부르지 않고 "잠시 후 다시" 안내(503 busy)
+ANSWER_CACHE_SEC = _env_int("ANSWER_CACHE_SEC", 180)      # 같은 질문(같은 언어) 답변 재사용 시간(초), 0 이면 끔
 MAX_TTS_CHARS = 1200          # Google TTS 5000바이트 제한 대비 (한·중·일 1자 ≈ 3바이트)
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
@@ -336,21 +340,68 @@ def _gen_config(system: str | None = None, max_tokens: int = 1024,
     return types.GenerateContentConfig(**kw)
 
 
+# ── 분당 입력 토큰 예산 ──
+#   최근 60초 동안 보낸 입력 토큰을 기록해 두고, 이번 요청까지 보내면 한도를 넘을 것 같으면
+#   실패(429)시키는 대신 자리가 날 때까지 잠깐 기다림 (사람이 몰리는 순간을 줄 세워서 흘려보냄)
+_tok_log: deque = deque()          # (보낸 시각, 토큰 수)
+_tok_per_char = 1.0                # 글자당 토큰 추정치 — 실제 응답의 사용량으로 계속 보정 (처음엔 넉넉하게)
+_tok_lock = asyncio.Lock()
+
+
+def _tok_used(now: float) -> int:
+    while _tok_log and now - _tok_log[0][0] > 60:
+        _tok_log.popleft()
+    return sum(t for _, t in _tok_log)
+
+
+class GeminiBusy(Exception):
+    """분당 토큰 한도가 꽉 차서 잠시 후 다시 시도해야 하는 상태"""
+
+
+async def _reserve_tokens(est: int) -> list:
+    deadline = time.monotonic() + TPM_MAX_WAIT
+    while True:
+        async with _tok_lock:
+            now = time.monotonic()
+            if _tok_used(now) + est <= TPM_BUDGET:
+                entry = [now, est]
+                _tok_log.append(entry)
+                return entry
+            if now >= deadline:
+                # 오래 기다리게 하거나 어차피 거절될 요청을 보내 한도를 더 깎지 않고 바로 '혼잡' 안내
+                raise GeminiBusy()
+        await asyncio.sleep(0.4)
+
+
+def _contents_chars(contents: list, system: str | None) -> int:
+    n = len(system or "")
+    for c in contents:
+        n += len(c) if isinstance(c, str) else 1500   # 이미지 1장 ≈ 토큰 수백~천여 개
+    return n
+
+
 async def gemini(contents: list, **kw) -> str:
+    global _tok_per_char
+    chars = _contents_chars(contents, kw.get("system"))
     # 사람이 몰려 Gemini 가 일시적으로 거절(429 요청 한도 / 503 과부하)하면 잠깐 쉬었다가 한 번 더
     for attempt in range(2):
+        entry = await _reserve_tokens(int(chars * _tok_per_char))
         try:
             resp = await asyncio.wait_for(
                 S.client.aio.models.generate_content(model=CHAT_MODEL, contents=contents, config=_gen_config(**kw)),
                 timeout=GEMINI_TIMEOUT,
             )
+            used = getattr(getattr(resp, "usage_metadata", None), "prompt_token_count", None)
+            if used:
+                entry[1] = int(used)                                  # 추정치를 실제 사용량으로 교체
+                _tok_per_char = 0.8 * _tok_per_char + 0.2 * (used / max(chars, 1))
             return (resp.text or "").strip()
         except Exception as e:
             msg = str(e)
             busy = any(k in msg for k in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "overloaded"))
             if attempt == 0 and busy:
                 print(f"⏳ Gemini 혼잡 → 재시도: {msg[:80]}")
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(3 if "429" in msg or "RESOURCE_EXHAUSTED" in msg else 1.5)
                 continue
             raise
 
@@ -663,6 +714,44 @@ async def chat(req: ChatReq, request: Request):
         else:
             context = section_block(S.sections[0]) + "\n\n(No closely related section. Available topics:)\n" + S.catalog
 
+    # ── 같은 질문 답변 재사용 ──
+    #   같은 언어 · 같은 질문(공백·문장부호 무시) · 같은 직전 대화면 ANSWER_CACHE_SEC 동안 저장된 답을 그대로 돌려줌
+    #   (동시에 같은 질문이 들어오면 Gemini 는 한 번만 부르고 나머지는 그 결과를 같이 받음)
+    last_ans = next((h.text for h in reversed(history) if h.role == "assistant"), "")
+    norm_q = re.sub(r"[\s\W_]+", "", message.lower())
+    ckey = hashlib.sha1(f"{lang}|{norm_q}|{last_ans[-200:]}".encode()).hexdigest() if ANSWER_CACHE_SEC > 0 else None
+    if ckey:
+        hit = _ans_cache.get(ckey)
+        if hit and time.monotonic() - hit[0] < ANSWER_CACHE_SEC:
+            print(f"♻️ [{lang}] {message[:40]} → 저장된 답변")
+            return hit[1]
+        fut = _ans_inflight.get(ckey)
+        if fut:
+            return await asyncio.shield(fut)
+        fut = asyncio.get_running_loop().create_future()
+        _ans_inflight[ckey] = fut
+        try:
+            result = await _chat_answer(lang, message, history, context)
+            _ans_cache[ckey] = (time.monotonic(), result)
+            if len(_ans_cache) > 2000:
+                for k in list(_ans_cache)[:500]:
+                    _ans_cache.pop(k, None)
+            fut.set_result(result)
+            return result
+        except Exception as e:
+            fut.set_exception(e)
+            fut.exception()   # 기다리는 쪽이 없어도 경고가 안 나도록
+            raise
+        finally:
+            _ans_inflight.pop(ckey, None)
+    return await _chat_answer(lang, message, history, context)
+
+
+_ans_cache: dict = {}        # 키 → (저장 시각, 응답)
+_ans_inflight: dict = {}     # 키 → 진행 중인 Future
+
+
+async def _chat_answer(lang: str, message: str, history: list, context: str) -> dict:
     hist_text = "\n".join(
         f"{'Visitor' if h.role == 'user' else 'Guide'}: {h.text[:300]}" for h in history
     ) or "(none)"
@@ -684,6 +773,9 @@ Respond as JSON: {{"answer": "<reply in {name}>", "used_ids": [<ids of the refer
 
     try:
         raw = await gemini([prompt], system=SYSTEM_INSTRUCTION, max_tokens=1024, json_mode=True)
+    except GeminiBusy:
+        print(f"🚦 /api/chat 혼잡 → 잠시 후 다시 안내")
+        raise HTTPException(status_code=503, detail="busy")
     except Exception as e:
         print(f"💥 /api/chat Gemini 오류: {type(e).__name__} {e}")
         raise HTTPException(status_code=502, detail="ai_error")
